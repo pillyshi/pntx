@@ -27,9 +27,14 @@ def test_unknown_backend_string_raises_value_error() -> None:
         PNTX(backend="not-a-real-backend")
 
 
-def test_unimplemented_backend_string_raises_import_error() -> None:
-    with pytest.raises(ImportError, match=r"pip install 'pntx\[anthropic\]'"):
-        PNTX(backend="anthropic")
+def test_unimplemented_backend_string_raises_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        core._BACKEND_REGISTRY, "missing", ("pntx._no_such_module", "NoSuchBackend")
+    )
+    with pytest.raises(ImportError, match=r"pip install 'pntx\[missing\]'"):
+        PNTX(backend="missing")
 
 
 def test_backend_string_forwards_kwargs_to_constructor(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -62,12 +67,28 @@ def test_methods_require_fit_first() -> None:
         model.generate(n=1, side="positive")
 
 
-def test_classify_and_classify_batch_require_scoring_backend() -> None:
-    model = PNTX(backend=CompleteOnlyBackend()).fit(SAMPLE_PAIRS)
-    with pytest.raises(NotImplementedError, match="ScoringBackend"):
-        model.classify("some text")
-    with pytest.raises(NotImplementedError, match="ScoringBackend"):
-        model.classify_batch(["some text"])
+def test_classify_falls_back_to_parsing_completion_for_plain_backend() -> None:
+    backend = CompleteOnlyBackend(complete_responses=["This text is positive."])
+    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+
+    result = model.classify("some text")
+
+    assert result == "positive"
+    assert result.confidence == 1.0
+    assert backend.complete_calls == [prompts.build_classify_prompt(SAMPLE_PAIRS, "some text")]
+
+
+def test_classify_batch_falls_back_to_parsing_completions_for_plain_backend() -> None:
+    backend = CompleteOnlyBackend(complete_responses=["positive", "negative"])
+    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+
+    results = model.classify_batch(["good text", "bad text"])
+
+    assert [r.label for r in results] == ["positive", "negative"]
+    assert backend.complete_calls == [
+        prompts.build_classify_prompt(SAMPLE_PAIRS, "good text"),
+        prompts.build_classify_prompt(SAMPLE_PAIRS, "bad text"),
+    ]
 
 
 def test_classify_picks_the_higher_scoring_label() -> None:

@@ -8,7 +8,7 @@ from typing import Any
 
 from . import generate as generate_module
 from . import prompts
-from .backends.base import Backend, BatchScoringBackend, ScoringBackend
+from .backends.base import Backend, BatchBackend, BatchScoringBackend, ScoringBackend
 from .selection import RandomSelector, Selector
 from .types import ClassifyResult, Label, Pair
 
@@ -111,8 +111,6 @@ class PNTX:
         self._check_fitted()
         if n < 0:
             raise ValueError(f"n must be >= 0, got {n}")
-        if verify:
-            self._scoring_backend()  # fail fast, before generating anything
 
         texts = generate_module.run_generation_loop(
             backend=self.backend,
@@ -137,49 +135,74 @@ class PNTX:
         return texts
 
     def classify(self, text: str) -> ClassifyResult:
+        """Classify ``text`` as ``"positive"`` or ``"negative"``.
+
+        If the backend implements ``ScoringBackend``, this compares the
+        log-likelihood of each label as a continuation of the prompt
+        (``confidence`` is a calibrated softmax over those log-likelihoods).
+        Otherwise it falls back to asking the backend to write the label and
+        parsing it out of the response text; see
+        ``prompts.parse_classify_label`` for that path's confidence
+        convention (not a calibrated probability).
+        """
         self._check_fitted()
-        backend = self._scoring_backend()
         exemplars = self.selector.select(self._pairs, self._exemplar_count(), query=text)
+        if isinstance(self.backend, ScoringBackend):
+            prompt = prompts.build_classify_prompt(exemplars, text)
+            scores = self.backend.score_choices(prompt, prompts.classify_choice_texts())
+            return _result_from_scores(scores)
         prompt = prompts.build_classify_prompt(exemplars, text)
-        scores = backend.score_choices(prompt, prompts.classify_choice_texts())
-        return _result_from_scores(scores)
+        raw = self.backend.complete(
+            prompt, temperature=0.0, max_tokens=prompts.CLASSIFY_COMPLETION_MAX_TOKENS
+        )
+        return _result_from_completion(raw)
 
     def classify_batch(self, texts: list[str]) -> list[ClassifyResult]:
+        """Classify each text in ``texts``; see ``classify()`` for the two
+        scoring strategies this dispatches between."""
         self._check_fitted()
-        backend = self._scoring_backend()
         if not texts:
             return []
-
         exemplars = self.selector.select(self._pairs, self._exemplar_count(), query=None)
-        choices = prompts.classify_choice_texts()
-        prefix = prompts.build_exemplar_prefix(exemplars)
 
-        if isinstance(backend, BatchScoringBackend):
-            queries = [prompts.build_query_suffix(text) for text in texts]
-            all_scores = backend.score_choices_batch(prefix, queries, choices)
+        if isinstance(self.backend, ScoringBackend):
+            choices = prompts.classify_choice_texts()
+            prefix = prompts.build_exemplar_prefix(exemplars)
+            if isinstance(self.backend, BatchScoringBackend):
+                queries = [prompts.build_query_suffix(text) for text in texts]
+                all_scores = self.backend.score_choices_batch(prefix, queries, choices)
+            else:
+                # No batch-optimized path for this backend; score one prompt
+                # at a time. (LlamaCppBackend implements BatchScoringBackend
+                # and takes the branch above; a future non-batching
+                # ScoringBackend falls back to this.)
+                all_scores = [
+                    self.backend.score_choices(prefix + prompts.build_query_suffix(text), choices)
+                    for text in texts
+                ]
+            return [_result_from_scores(scores) for scores in all_scores]
+
+        completion_prompts = [prompts.build_classify_prompt(exemplars, text) for text in texts]
+        if isinstance(self.backend, BatchBackend):
+            raw_completions = self.backend.complete_batch(
+                completion_prompts,
+                temperature=0.0,
+                max_tokens=prompts.CLASSIFY_COMPLETION_MAX_TOKENS,
+            )
         else:
-            # No batch-optimized path for this backend; score one prompt at a
-            # time. (LlamaCppBackend implements BatchScoringBackend and takes
-            # the branch above; a future non-batching ScoringBackend falls
-            # back to this.)
-            all_scores = [
-                backend.score_choices(prefix + prompts.build_query_suffix(text), choices)
-                for text in texts
+            # No concurrent-batch path for this backend; complete one prompt
+            # at a time. (AnthropicBackend implements BatchBackend and takes
+            # the branch above.)
+            raw_completions = [
+                self.backend.complete(
+                    prompt, temperature=0.0, max_tokens=prompts.CLASSIFY_COMPLETION_MAX_TOKENS
+                )
+                for prompt in completion_prompts
             ]
-        return [_result_from_scores(scores) for scores in all_scores]
+        return [_result_from_completion(raw) for raw in raw_completions]
 
     def _exemplar_count(self) -> int:
         return self.max_exemplars if self.max_exemplars is not None else len(self._pairs)
-
-    def _scoring_backend(self) -> ScoringBackend:
-        if not isinstance(self.backend, ScoringBackend):
-            raise NotImplementedError(
-                "this requires a ScoringBackend (classify(), classify_batch(), "
-                "and generate(verify=True) all classify via score_choices); "
-                "parse-based classification for plain Backend instances is not "
-                "implemented yet"
-            )
-        return self.backend
 
     def _check_fitted(self) -> None:
         if not self._pairs:
@@ -190,6 +213,11 @@ def _result_from_scores(scores: list[float]) -> ClassifyResult:
     probs = _softmax(scores)
     best = max(range(len(scores)), key=scores.__getitem__)
     return ClassifyResult(label=prompts.CLASSIFY_LABELS[best], confidence=probs[best])
+
+
+def _result_from_completion(raw: str) -> ClassifyResult:
+    label, confidence = prompts.parse_classify_label(raw)
+    return ClassifyResult(label=label, confidence=confidence)
 
 
 def _softmax(scores: list[float]) -> list[float]:

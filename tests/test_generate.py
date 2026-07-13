@@ -38,13 +38,17 @@ def test_generate_works_without_scoring_backend_when_verify_false() -> None:
     assert result == ["a", "b"]
 
 
-def test_generate_requires_scoring_backend_when_verify_true() -> None:
-    backend = CompleteOnlyBackend()
+def test_generate_verify_works_with_plain_backend_via_parsed_classify() -> None:
+    # CompleteOnlyBackend has no score_choices, so verify=True must go
+    # through classify()'s parse-based fallback instead of requiring a
+    # ScoringBackend.
+    backend = CompleteOnlyBackend(complete_responses=["only candidate text", "positive"])
     model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
 
-    with pytest.raises(NotImplementedError, match="ScoringBackend"):
-        model.generate(n=1, side="positive", verify=True)
-    assert backend.complete_calls == []  # fails fast, before generating anything
+    result = model.generate(n=1, side="positive", verify=True, dedup=False)
+
+    assert result == ["only candidate text"]
+    assert len(backend.complete_calls) == 2
 
 
 def test_generate_dedup_filters_near_duplicate_within_batch() -> None:

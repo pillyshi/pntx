@@ -13,7 +13,9 @@ dependencies = []
 llama = [
     "llama-cpp-python",
 ]
-anthropic = ["anthropic"]
+anthropic = [
+    "anthropic",
+]
 embeddings = []
 
 [build-system]

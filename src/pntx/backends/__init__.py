@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from .base import Backend, BatchScoringBackend, ScoringBackend
+from .base import Backend, BatchBackend, BatchScoringBackend, ScoringBackend
 
-__all__ = ["BatchScoringBackend", "Backend", "ScoringBackend"]
+__all__ = ["BatchBackend", "BatchScoringBackend", "Backend", "ScoringBackend"]

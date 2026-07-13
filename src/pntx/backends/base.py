@@ -51,3 +51,25 @@ class BatchScoringBackend(ScoringBackend, Protocol):
         """For each query in ``queries``, score ``choices`` as a continuation
         of ``prefix + query``. Returns one score list per query, in order."""
         ...
+
+
+@runtime_checkable
+class BatchBackend(Backend, Protocol):
+    """A ``Backend`` that can complete many prompts concurrently.
+
+    Used by ``classify_batch``'s parse-based path (for backends that don't
+    implement ``ScoringBackend``, e.g. remote chat APIs): instead of
+    completing each prompt one at a time, ``complete_batch`` can run them
+    concurrently (e.g. via asyncio) and return results in the same order.
+    """
+
+    def complete_batch(
+        self,
+        prompts: list[str],
+        *,
+        temperature: float = 1.0,
+        max_tokens: int = 512,
+        stop: list[str] | None = None,
+    ) -> list[str]:
+        """Complete every prompt in ``prompts``, returning results in order."""
+        ...
