@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from importlib import import_module
 from typing import Any
 
-from .backends.base import Backend
+from . import prompts
+from .backends.base import Backend, BatchScoringBackend, ScoringBackend
 from .selection import RandomSelector, Selector
 from .types import ClassifyResult, Label, Pair
 
@@ -53,6 +55,7 @@ class PNTX:
         backend: Backend | str,
         *,
         selector: Selector | None = None,
+        max_exemplars: int | None = None,
         **backend_kwargs: Any,
     ) -> None:
         """Create a PNTX model.
@@ -61,9 +64,13 @@ class PNTX:
         of a built-in backend (e.g. ``"llama"``) to construct lazily; any
         ``backend_kwargs`` are then forwarded to that backend's constructor
         (e.g. ``PNTX(backend="llama", model_path="model.gguf")``).
+
+        ``max_exemplars`` caps how many fitted pairs ``selector`` is asked to
+        pick for a single prompt; ``None`` means "as many as are fitted".
         """
         self.backend = _resolve_backend(backend, backend_kwargs)
         self.selector: Selector = selector if selector is not None else RandomSelector()
+        self.max_exemplars = max_exemplars
         self._pairs: list[Pair] = []
 
     @property
@@ -96,12 +103,61 @@ class PNTX:
 
     def classify(self, text: str) -> ClassifyResult:
         self._check_fitted()
-        raise NotImplementedError("PNTX.classify() is not implemented yet")
+        backend = self._scoring_backend()
+        exemplars = self.selector.select(self._pairs, self._exemplar_count(), query=text)
+        prompt = prompts.build_classify_prompt(exemplars, text)
+        scores = backend.score_choices(prompt, prompts.classify_choice_texts())
+        return _result_from_scores(scores)
 
     def classify_batch(self, texts: list[str]) -> list[ClassifyResult]:
         self._check_fitted()
-        raise NotImplementedError("PNTX.classify_batch() is not implemented yet")
+        backend = self._scoring_backend()
+        if not texts:
+            return []
+
+        exemplars = self.selector.select(self._pairs, self._exemplar_count(), query=None)
+        choices = prompts.classify_choice_texts()
+        prefix = prompts.build_exemplar_prefix(exemplars)
+
+        if isinstance(backend, BatchScoringBackend):
+            queries = [prompts.build_query_suffix(text) for text in texts]
+            all_scores = backend.score_choices_batch(prefix, queries, choices)
+        else:
+            # No batch-optimized path for this backend; score one prompt at a
+            # time. (LlamaCppBackend implements BatchScoringBackend and takes
+            # the branch above; a future non-batching ScoringBackend falls
+            # back to this.)
+            all_scores = [
+                backend.score_choices(prefix + prompts.build_query_suffix(text), choices)
+                for text in texts
+            ]
+        return [_result_from_scores(scores) for scores in all_scores]
+
+    def _exemplar_count(self) -> int:
+        return self.max_exemplars if self.max_exemplars is not None else len(self._pairs)
+
+    def _scoring_backend(self) -> ScoringBackend:
+        if not isinstance(self.backend, ScoringBackend):
+            raise NotImplementedError(
+                "classify()/classify_batch() currently require a ScoringBackend; "
+                "parse-based classification for plain Backend instances is not "
+                "implemented yet"
+            )
+        return self.backend
 
     def _check_fitted(self) -> None:
         if not self._pairs:
             raise RuntimeError("PNTX.fit(pairs) must be called before this method")
+
+
+def _result_from_scores(scores: list[float]) -> ClassifyResult:
+    probs = _softmax(scores)
+    best = max(range(len(scores)), key=scores.__getitem__)
+    return ClassifyResult(label=prompts.CLASSIFY_LABELS[best], confidence=probs[best])
+
+
+def _softmax(scores: list[float]) -> list[float]:
+    top = max(scores)
+    exps = [math.exp(score - top) for score in scores]
+    total = sum(exps)
+    return [exp / total for exp in exps]
