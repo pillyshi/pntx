@@ -16,7 +16,9 @@ llama = [
 anthropic = [
     "anthropic",
 ]
-embeddings = []
+embeddings = [
+    "sentence-transformers",
+]
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]
@@ -33,6 +35,10 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 strict = true
 python_version = "3.10"
+
+[[tool.mypy.overrides]]
+module = "sentence_transformers.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
