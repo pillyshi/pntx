@@ -3,11 +3,38 @@ name = "pntx"
 version = "0.1.0"
 description = "Generate and classify text from user-defined (positive, negative) example pairs"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "pillyshi", email = "pillyshi21@gmail.com" }
 ]
 requires-python = ">=3.10"
+keywords = [
+    "nlp",
+    "llm",
+    "llama.cpp",
+    "text-generation",
+    "text-classification",
+    "few-shot",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Linguistic",
+    "Typing :: Typed",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/pillyshi/pntx"
+Repository = "https://github.com/pillyshi/pntx"
+Issues = "https://github.com/pillyshi/pntx/issues"
 
 [project.optional-dependencies]
 llama = [
@@ -48,4 +75,5 @@ dev = [
     "mypy>=2.3.0",
     "pytest>=9.1.1",
     "ruff>=0.15.21",
+    "twine>=6.2.0",
 ]
