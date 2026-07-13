@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from importlib import import_module
+from typing import Any
 
 from .backends.base import Backend
 from .selection import RandomSelector, Selector
@@ -13,8 +14,14 @@ _BACKEND_REGISTRY: dict[str, tuple[str, str]] = {
 }
 
 
-def _resolve_backend(backend: Backend | str) -> Backend:
+def _resolve_backend(backend: Backend | str, backend_kwargs: dict[str, Any]) -> Backend:
     if not isinstance(backend, str):
+        if backend_kwargs:
+            raise TypeError(
+                "backend_kwargs are only used when backend is given as a string "
+                "(e.g. PNTX(backend='llama', model_path=...)); construct the "
+                "Backend instance directly instead"
+            )
         return backend
     try:
         module_name, class_name = _BACKEND_REGISTRY[backend]
@@ -30,7 +37,7 @@ def _resolve_backend(backend: Backend | str) -> Backend:
             f"Backend {backend!r} requires the optional '{backend}' extra. "
             f"Install it with: pip install 'pntx[{backend}]'"
         ) from e
-    return getattr(module, class_name)()  # type: ignore[no-any-return]
+    return getattr(module, class_name)(**backend_kwargs)  # type: ignore[no-any-return]
 
 
 class PNTX:
@@ -46,8 +53,16 @@ class PNTX:
         backend: Backend | str,
         *,
         selector: Selector | None = None,
+        **backend_kwargs: Any,
     ) -> None:
-        self.backend = _resolve_backend(backend)
+        """Create a PNTX model.
+
+        ``backend`` is either a ready-made ``Backend`` instance, or the name
+        of a built-in backend (e.g. ``"llama"``) to construct lazily; any
+        ``backend_kwargs`` are then forwarded to that backend's constructor
+        (e.g. ``PNTX(backend="llama", model_path="model.gguf")``).
+        """
+        self.backend = _resolve_backend(backend, backend_kwargs)
         self.selector: Selector = selector if selector is not None else RandomSelector()
         self._pairs: list[Pair] = []
 
