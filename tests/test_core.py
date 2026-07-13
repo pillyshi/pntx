@@ -62,12 +62,6 @@ def test_methods_require_fit_first() -> None:
         model.generate(n=1, side="positive")
 
 
-def test_generate_is_not_implemented_yet() -> None:
-    model = PNTX(backend=FakeBackend()).fit(SAMPLE_PAIRS)
-    with pytest.raises(NotImplementedError):
-        model.generate(n=1, side="positive")
-
-
 def test_classify_and_classify_batch_require_scoring_backend() -> None:
     model = PNTX(backend=CompleteOnlyBackend()).fit(SAMPLE_PAIRS)
     with pytest.raises(NotImplementedError, match="ScoringBackend"):

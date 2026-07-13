@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .types import NEGATIVE, POSITIVE, Label, Pair
 
 CLASSIFY_LABELS: list[Label] = [POSITIVE, NEGATIVE]
@@ -42,3 +44,50 @@ def build_classify_prompt(pairs: list[Pair], query: str) -> str:
 def classify_choice_texts() -> list[str]:
     """``CLASSIFY_LABEL_CHOICES`` values in ``CLASSIFY_LABELS`` order."""
     return [CLASSIFY_LABEL_CHOICES[label] for label in CLASSIFY_LABELS]
+
+
+_GENERATE_PREAMBLE = (
+    'Below are example pairs contrasting "positive" and "negative" texts; '
+    "their exact meaning is defined only by these examples.\n\n"
+)
+_GENERATE_EXEMPLAR_LINE = "- {label}: {text}\n"
+_GENERATE_INSTRUCTION = (
+    "\nWrite {n} new, diverse {side} texts. Do not copy or closely paraphrase "
+    "the examples above. Output one text per line, numbered starting at 1, "
+    "with no other commentary.\n\n1. "
+)
+
+_NUMBERED_LINE = re.compile(r"^\s*\d+[.)]\s*(.+)$")
+
+
+def build_generate_prompt(pairs: list[Pair], side: Label, n: int) -> str:
+    """Render the generation prompt asking for ``n`` new ``side`` texts.
+
+    Ends primed with ``"1. "`` so a plain text-completion backend continues
+    directly into the first generated item.
+    """
+    exemplars = "".join(
+        _GENERATE_EXEMPLAR_LINE.format(label=POSITIVE, text=pos)
+        + _GENERATE_EXEMPLAR_LINE.format(label=NEGATIVE, text=neg)
+        for pos, neg in pairs
+    )
+    return _GENERATE_PREAMBLE + exemplars + _GENERATE_INSTRUCTION.format(n=n, side=side)
+
+
+def parse_generated_texts(raw: str) -> list[str]:
+    """Parse a numbered-list completion (continuing after a primed ``"1. "``)
+    into a flat list of generated texts.
+
+    This is a best-effort heuristic, not a strict parser: lines that aren't
+    numbered (e.g. a wrapped continuation of the previous item) are kept
+    as-is rather than dropped, since backends aren't guaranteed to always
+    produce clean single-line items.
+    """
+    lines = [line for line in raw.strip().splitlines() if line.strip()]
+    if not lines:
+        return []
+    texts = [lines[0].strip()]
+    for line in lines[1:]:
+        match = _NUMBERED_LINE.match(line)
+        texts.append(match.group(1).strip() if match else line.strip())
+    return [text for text in texts if text]

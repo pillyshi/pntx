@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Iterable
 from importlib import import_module
 from typing import Any
 
+from . import generate as generate_module
 from . import prompts
 from .backends.base import Backend, BatchScoringBackend, ScoringBackend
 from .selection import RandomSelector, Selector
@@ -97,9 +99,42 @@ class PNTX:
         dedup: bool = True,
         verify: bool = True,
         min_confidence: float = 0.8,
+        max_attempts: int | None = None,
     ) -> list[str]:
+        """Generate up to ``n`` new ``side`` texts from the fitted pairs.
+
+        If ``verify`` keeps rejecting candidates (wrong self-classified
+        label, or confidence below ``min_confidence``), fewer than ``n``
+        texts may come back; this warns rather than looping forever, capped
+        at ``max_attempts`` retries (default: ``max(n * 3, 3)``).
+        """
         self._check_fitted()
-        raise NotImplementedError("PNTX.generate() is not implemented yet")
+        if n < 0:
+            raise ValueError(f"n must be >= 0, got {n}")
+        if verify:
+            self._scoring_backend()  # fail fast, before generating anything
+
+        texts = generate_module.run_generation_loop(
+            backend=self.backend,
+            pairs=self._pairs,
+            selector=self.selector,
+            exemplar_count=self._exemplar_count(),
+            classify=self.classify,
+            n=n,
+            side=side,
+            temperature=temperature,
+            dedup=dedup,
+            verify=verify,
+            min_confidence=min_confidence,
+            max_attempts=max_attempts,
+        )
+        if len(texts) < n:
+            warnings.warn(
+                f"requested n={n} {side!r} texts but only generated {len(texts)}",
+                UserWarning,
+                stacklevel=2,
+            )
+        return texts
 
     def classify(self, text: str) -> ClassifyResult:
         self._check_fitted()
@@ -139,7 +174,8 @@ class PNTX:
     def _scoring_backend(self) -> ScoringBackend:
         if not isinstance(self.backend, ScoringBackend):
             raise NotImplementedError(
-                "classify()/classify_batch() currently require a ScoringBackend; "
+                "this requires a ScoringBackend (classify(), classify_batch(), "
+                "and generate(verify=True) all classify via score_choices); "
                 "parse-based classification for plain Backend instances is not "
                 "implemented yet"
             )

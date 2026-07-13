@@ -6,8 +6,13 @@ from pntx.types import Pair
 class FakeBackend:
     """A canned-response ScoringBackend for testing, per CLAUDE.md's test conventions."""
 
-    def __init__(self, choice_scores: dict[str, list[float]] | None = None) -> None:
+    def __init__(
+        self,
+        choice_scores: dict[str, list[float]] | None = None,
+        complete_responses: list[str] | None = None,
+    ) -> None:
         self.choice_scores = choice_scores or {}
+        self._complete_responses = list(complete_responses or [])
         self.complete_calls: list[str] = []
         self.score_calls: list[tuple[str, list[str]]] = []
 
@@ -20,6 +25,8 @@ class FakeBackend:
         stop: list[str] | None = None,
     ) -> str:
         self.complete_calls.append(prompt)
+        if self._complete_responses:
+            return self._complete_responses.pop(0)
         return ""
 
     def score_choices(self, prompt: str, choices: list[str]) -> list[float]:
@@ -52,6 +59,10 @@ class FakeBatchBackend(FakeBackend):
 class CompleteOnlyBackend:
     """A Backend that does *not* implement ScoringBackend."""
 
+    def __init__(self, complete_responses: list[str] | None = None) -> None:
+        self._complete_responses = list(complete_responses or [])
+        self.complete_calls: list[str] = []
+
     def complete(
         self,
         prompt: str,
@@ -60,6 +71,9 @@ class CompleteOnlyBackend:
         max_tokens: int = 512,
         stop: list[str] | None = None,
     ) -> str:
+        self.complete_calls.append(prompt)
+        if self._complete_responses:
+            return self._complete_responses.pop(0)
         return ""
 
 
