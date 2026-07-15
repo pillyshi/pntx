@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pntx.selection import DiversitySelector, NearestSelector, RandomSelector
+import pytest
+
+from pntx.selection import BudgetSelector, DiversitySelector, NearestSelector, RandomSelector
 
 from .conftest import SAMPLE_POSITIVE
 
@@ -84,6 +86,67 @@ def test_nearest_selector_uses_custom_similarity_fn() -> None:
 
     assert selected == [pool[0]]
     assert calls
+
+
+def test_budget_selector_stops_when_budget_is_exhausted() -> None:
+    pool = ["a", "b", "c", "d", "e"]
+    selector = BudgetSelector(tokenizer_fn=lambda t: 10, token_budget=25, seed=0)
+
+    selected = selector.select(pool, k=100)
+
+    # budget(25) // per-item cost(10) == 2 items fit; a 3rd would be 30 > 25.
+    assert len(selected) == 2
+    assert len(set(selected)) == 2
+    assert all(text in pool for text in selected)
+
+
+def test_budget_selector_does_not_shortcut_when_k_covers_whole_pool() -> None:
+    pool = ["a", "b", "c", "d", "e"]
+    selector = BudgetSelector(tokenizer_fn=lambda t: 10, token_budget=25, seed=0)
+
+    # Unlike RandomSelector/NearestSelector/DiversitySelector, k >= len(pool)
+    # must not bypass the budget check.
+    selected = selector.select(pool, k=len(pool))
+    assert len(selected) == 2
+
+
+def test_budget_selector_respects_k_cap_even_when_budget_allows_more() -> None:
+    pool = ["a", "b", "c", "d", "e"]
+    selector = BudgetSelector(tokenizer_fn=lambda t: 1, token_budget=1000, seed=0)
+    assert len(selector.select(pool, k=2)) == 2
+
+
+def test_budget_selector_k_zero_returns_empty() -> None:
+    selector = BudgetSelector(tokenizer_fn=lambda t: 1, token_budget=10, seed=0)
+    assert selector.select(["a", "b"], k=0) == []
+
+
+def test_budget_selector_empty_pool_returns_empty() -> None:
+    selector = BudgetSelector(tokenizer_fn=lambda t: 1, token_budget=10, seed=0)
+    assert selector.select([], k=5) == []
+
+
+def test_budget_selector_is_reproducible_with_same_seed() -> None:
+    pool = ["a", "b", "c", "d", "e"]
+    a = BudgetSelector(tokenizer_fn=lambda t: 10, token_budget=25, seed=42).select(pool, k=100)
+    b = BudgetSelector(tokenizer_fn=lambda t: 10, token_budget=25, seed=42).select(pool, k=100)
+    assert a == b
+
+
+def test_budget_selector_ignores_query() -> None:
+    pool = ["a", "b", "c"]
+    without_query = BudgetSelector(tokenizer_fn=lambda t: 1, token_budget=100, seed=0).select(
+        pool, k=100
+    )
+    with_query = BudgetSelector(tokenizer_fn=lambda t: 1, token_budget=100, seed=0).select(
+        pool, k=100, query="anything"
+    )
+    assert without_query == with_query
+
+
+def test_budget_selector_rejects_non_positive_token_budget() -> None:
+    with pytest.raises(ValueError, match="token_budget must be > 0"):
+        BudgetSelector(tokenizer_fn=lambda t: 1, token_budget=0)
 
 
 def test_diversity_selector_k_greater_than_available_returns_all() -> None:

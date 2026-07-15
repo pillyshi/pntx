@@ -65,6 +65,57 @@ class NearestSelector:
         return [pool[i] for i in sorted(ranked[:k])]
 
 
+class BudgetSelector:
+    """Selects as many texts from ``pool`` as fit within a token budget.
+
+    Ported from ``semaxis``'s ``HardPositiveOverSampler`` sampling strategy
+    (``sample_texts_within_budget``): ``pool`` is shuffled, then texts are
+    added one by one until the next one would push the running token total
+    over ``token_budget`` -- at which point selection stops (remaining,
+    possibly-shorter texts are *not* tried, matching the ported behavior).
+
+    Unlike the other selectors, this one does *not* short-circuit to
+    ``list(pool)`` when ``k >= len(pool)``: the budget is the real
+    constraint here, and the whole point is to keep prompts within it even
+    when every text in the pool would otherwise be included. ``k`` still
+    acts as a secondary cap on top of the budget (e.g. from
+    ``PNTX(max_exemplars=...)``); ``query`` is ignored.
+
+    ``tokenizer_fn`` should match whatever backend is doing the actual
+    tokenizing (e.g. ``LlamaCppBackend.count_tokens``), so the budget
+    reflects real token counts rather than an approximation.
+    """
+
+    def __init__(
+        self, tokenizer_fn: Callable[[str], int], token_budget: int, seed: int | None = None
+    ) -> None:
+        if token_budget <= 0:
+            raise ValueError(f"token_budget must be > 0, got {token_budget}")
+        self.tokenizer_fn = tokenizer_fn
+        self.token_budget = token_budget
+        self._rng = random.Random(seed)
+
+    def select(self, pool: list[str], k: int, query: str | None = None) -> list[str]:
+        if k <= 0:
+            return []
+
+        indices = list(range(len(pool)))
+        self._rng.shuffle(indices)
+
+        selected: list[str] = []
+        total_tokens = 0
+        for idx in indices:
+            if len(selected) >= k:
+                break
+            text = pool[idx]
+            count = self.tokenizer_fn(text)
+            if total_tokens + count > self.token_budget:
+                break
+            selected.append(text)
+            total_tokens += count
+        return selected
+
+
 class DiversitySelector:
     """Greedily selects ``k`` texts from ``pool`` that are maximally different
     from each other, ignoring ``query``.

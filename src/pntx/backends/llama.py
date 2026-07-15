@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 try:
@@ -21,6 +22,15 @@ class LlamaCppBackend:
     prefix boundary before eval'ing that span's tokens (``Llama.eval()``
     trims the KV cache down to the current ``n_tokens`` before appending, so
     this discards only the previous span, not the shared prefix).
+
+    Every entry point also guards against prompts that don't fit in
+    ``n_ctx``: rather than letting llama.cpp raise once eval is attempted,
+    tokens are trimmed from the *front* of the prompt (warning when this
+    happens) down to a budget that still leaves room for the response
+    (``max_tokens``) or the scored choices. The front is what's dropped
+    because prompts here are built exemplars-first, query/instruction-last
+    (see ``prompts.py``), so trimming the front sheds the oldest few-shot
+    material while preserving the part that's actually being asked about.
     """
 
     def __init__(
@@ -62,8 +72,11 @@ class LlamaCppBackend:
         max_tokens: int = 512,
         stop: list[str] | None = None,
     ) -> str:
+        prompt_tokens = self._fit_to_context(
+            self._tokenize(prompt, add_bos=True), reserve=max_tokens
+        )
         result = self._llm.create_completion(
-            prompt,
+            prompt_tokens,
             temperature=temperature,
             max_tokens=max_tokens,
             stop=stop or [],
@@ -76,7 +89,9 @@ class LlamaCppBackend:
         """Return the summed log-likelihood of each choice as a continuation of ``prompt``."""
         if not choices:
             return []
-        prompt_tokens = self._tokenize(prompt, add_bos=True)
+        prompt_tokens = self._fit_to_context(
+            self._tokenize(prompt, add_bos=True), reserve=self._max_choice_tokens(choices)
+        )
         self._reset()
         self._llm.eval(prompt_tokens)
         return self._score_choices_at(self._llm.n_tokens, choices)
@@ -88,11 +103,20 @@ class LlamaCppBackend:
 
         ``prefix`` (e.g. the few-shot exemplar block) is eval'd once and its
         KV cache reused across every query, instead of re-evaluating it per
-        query as a naive per-item ``score_choices`` loop would.
+        query as a naive per-item ``score_choices`` loop would. ``prefix`` is
+        trimmed to leave room for the *longest* query plus the longest
+        choice, so that every query in the batch is guaranteed to fit
+        against the shared, trimmed prefix.
         """
         if not queries:
             return []
-        prefix_tokens = self._tokenize(prefix, add_bos=True)
+        max_query_tokens = max(
+            (len(self._tokenize(query, add_bos=False)) for query in queries), default=0
+        )
+        prefix_tokens = self._fit_to_context(
+            self._tokenize(prefix, add_bos=True),
+            reserve=max_query_tokens + self._max_choice_tokens(choices),
+        )
         self._reset()
         self._llm.eval(prefix_tokens)
         base = self._llm.n_tokens
@@ -106,8 +130,53 @@ class LlamaCppBackend:
         self._llm.n_tokens = base
         return results
 
+    def count_tokens(self, text: str) -> int:
+        """Return how many tokens ``text`` tokenizes to (no BOS).
+
+        Meant to be handed to ``selection.BudgetSelector`` as its
+        ``tokenizer_fn``, so exemplar selection can stay within the actual
+        model's token accounting rather than an approximation.
+        """
+        return len(self._tokenize(text, add_bos=False))
+
     def _tokenize(self, text: str, *, add_bos: bool) -> list[int]:
         return self._llm.tokenize(text.encode("utf-8"), add_bos=add_bos)
+
+    def _max_choice_tokens(self, choices: list[str]) -> int:
+        return max((len(self._tokenize(choice, add_bos=False)) for choice in choices), default=0)
+
+    def _fit_to_context(self, tokens: list[int], *, reserve: int) -> list[int]:
+        """Trim ``tokens`` (dropping from the front) so ``len(tokens) + reserve``
+        fits in ``n_ctx``, warning when a trim actually happens.
+
+        ``reserve`` is however many tokens the caller still needs room for
+        after ``tokens`` -- ``max_tokens`` for a completion, or the longest
+        scored choice (plus, for a batch, the longest query) for scoring.
+        """
+        n_ctx = self._llm.n_ctx()
+        budget = n_ctx - reserve
+        if budget <= 0:
+            raise ValueError(
+                f"reserve ({reserve} tokens) alone leaves no room in the context "
+                f"window ({n_ctx} tokens); reduce max_tokens/choices or increase n_ctx"
+            )
+        if len(tokens) <= budget:
+            return tokens
+        warnings.warn(
+            f"prompt ({len(tokens)} tokens) exceeds the available context budget "
+            f"({budget} of {n_ctx} tokens, after reserving {reserve} for the "
+            "response); dropping the oldest exemplars to fit. Pass "
+            "PNTX(max_exemplars=...) to select fewer exemplars deliberately "
+            "instead of relying on this truncation.",
+            UserWarning,
+            stacklevel=3,
+        )
+        if budget <= 1:
+            return tokens[-budget:] if budget else []
+        # Every call site tokenizes with add_bos=True, so tokens[0] is BOS;
+        # keep it and drop from just after it, rather than dropping BOS
+        # itself along with the oldest exemplars.
+        return tokens[:1] + tokens[-(budget - 1) :]
 
     def _reset(self) -> None:
         self._llm.reset()  # type: ignore[no-untyped-call]  # llama_cpp.Llama.reset() has no annotations

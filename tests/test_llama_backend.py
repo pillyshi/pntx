@@ -66,3 +66,61 @@ def test_repo_id_without_filename_is_allowed() -> None:
 
     kwargs = backend._llm.init_kwargs  # type: ignore[attr-defined]
     assert kwargs["filename"] is None
+
+
+def test_fit_to_context_returns_tokens_unchanged_when_they_fit() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+    backend._llm.n_ctx = lambda: 10  # type: ignore[method-assign]
+
+    tokens = [1, 2, 3]
+    assert backend._fit_to_context(tokens, reserve=2) == tokens
+
+
+def test_fit_to_context_trims_from_front_keeping_bos() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+    backend._llm.n_ctx = lambda: 5  # type: ignore[method-assign]
+
+    tokens = [100, 1, 2, 3, 4, 5]  # 100 stands in for the leading BOS token
+    with pytest.warns(UserWarning, match="exceeds the available context budget"):
+        trimmed = backend._fit_to_context(tokens, reserve=1)
+
+    # budget = n_ctx(5) - reserve(1) = 4: BOS kept, plus the last 3 tokens.
+    assert trimmed == [100, 3, 4, 5]
+
+
+def test_fit_to_context_raises_when_reserve_exceeds_context() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+    backend._llm.n_ctx = lambda: 5  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="leaves no room"):
+        backend._fit_to_context([1, 2, 3], reserve=5)
+
+
+def test_max_choice_tokens_returns_longest_choice_length() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+
+    def _tokenize(text: bytes, add_bos: bool = True, special: bool = False) -> list[int]:
+        return list(text)
+
+    backend._llm.tokenize = _tokenize  # type: ignore[method-assign]
+
+    assert backend._max_choice_tokens([" positive", " neg"]) == len(b" positive")
+
+
+def test_max_choice_tokens_empty_choices_is_zero() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+    assert backend._max_choice_tokens([]) == 0
+
+
+def test_count_tokens_returns_token_count_without_bos() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+    calls: list[tuple[bytes, bool]] = []
+
+    def _tokenize(text: bytes, add_bos: bool = True, special: bool = False) -> list[int]:
+        calls.append((text, add_bos))
+        return list(text)
+
+    backend._llm.tokenize = _tokenize  # type: ignore[method-assign]
+
+    assert backend.count_tokens("hello") == len(b"hello")
+    assert calls == [(b"hello", False)]
