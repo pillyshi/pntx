@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import itertools
 import re
 
-from .types import NEGATIVE, POSITIVE, Label, Pair
+from .types import NEGATIVE, POSITIVE, Label
 
 CLASSIFY_LABELS: list[Label] = [POSITIVE, NEGATIVE]
 """Fixed label order used everywhere a classify score list is produced."""
@@ -19,16 +20,20 @@ _EXEMPLAR_TEMPLATE = "Text: {text}\nLabel: {label}\n\n"
 _QUERY_TEMPLATE = "Text: {text}\nLabel:"
 
 
-def build_exemplar_prefix(pairs: list[Pair]) -> str:
-    """Render the few-shot block for ``pairs``. This is the part of the
+def build_exemplar_prefix(positive: list[str], negative: list[str]) -> str:
+    """Render the few-shot block for ``positive``/``negative`` exemplars,
+    interleaved (positive[0], negative[0], positive[1], ...; whichever side
+    runs out first just stops contributing lines). This is the part of the
     classification prompt shared across every query, so it should come
     first (see ``build_query_suffix``) to keep it a stable KV-cache prefix.
     """
-    return "".join(
-        _EXEMPLAR_TEMPLATE.format(text=pos, label=POSITIVE)
-        + _EXEMPLAR_TEMPLATE.format(text=neg, label=NEGATIVE)
-        for pos, neg in pairs
-    )
+    lines = []
+    for pos, neg in itertools.zip_longest(positive, negative):
+        if pos is not None:
+            lines.append(_EXEMPLAR_TEMPLATE.format(text=pos, label=POSITIVE))
+        if neg is not None:
+            lines.append(_EXEMPLAR_TEMPLATE.format(text=neg, label=NEGATIVE))
+    return "".join(lines)
 
 
 def build_query_suffix(text: str) -> str:
@@ -36,9 +41,9 @@ def build_query_suffix(text: str) -> str:
     return _QUERY_TEMPLATE.format(text=text)
 
 
-def build_classify_prompt(pairs: list[Pair], query: str) -> str:
+def build_classify_prompt(positive: list[str], negative: list[str], query: str) -> str:
     """Render the full classification prompt for a single ``query``."""
-    return build_exemplar_prefix(pairs) + build_query_suffix(query)
+    return build_exemplar_prefix(positive, negative) + build_query_suffix(query)
 
 
 def classify_choice_texts() -> list[str]:
@@ -91,18 +96,20 @@ _GENERATE_INSTRUCTION = (
 _NUMBERED_LINE = re.compile(r"^\s*\d+[.)]\s*(.+)$")
 
 
-def build_generate_prompt(pairs: list[Pair], side: Label, n: int) -> str:
+def build_generate_prompt(positive: list[str], negative: list[str], side: Label, n: int) -> str:
     """Render the generation prompt asking for ``n`` new ``side`` texts.
 
-    Ends primed with ``"1. "`` so a plain text-completion backend continues
-    directly into the first generated item.
+    ``positive``/``negative`` exemplars are interleaved the same way as
+    ``build_exemplar_prefix``. Ends primed with ``"1. "`` so a plain
+    text-completion backend continues directly into the first generated item.
     """
-    exemplars = "".join(
-        _GENERATE_EXEMPLAR_LINE.format(label=POSITIVE, text=pos)
-        + _GENERATE_EXEMPLAR_LINE.format(label=NEGATIVE, text=neg)
-        for pos, neg in pairs
-    )
-    return _GENERATE_PREAMBLE + exemplars + _GENERATE_INSTRUCTION.format(n=n, side=side)
+    lines = []
+    for pos, neg in itertools.zip_longest(positive, negative):
+        if pos is not None:
+            lines.append(_GENERATE_EXEMPLAR_LINE.format(label=POSITIVE, text=pos))
+        if neg is not None:
+            lines.append(_GENERATE_EXEMPLAR_LINE.format(label=NEGATIVE, text=neg))
+    return _GENERATE_PREAMBLE + "".join(lines) + _GENERATE_INSTRUCTION.format(n=n, side=side)
 
 
 def parse_generated_texts(raw: str) -> list[str]:

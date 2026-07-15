@@ -23,22 +23,22 @@ def test_cosine_similarity_fn_ranks_semantically_close_text_higher() -> None:
 
 
 def test_nearest_selector_with_embeddings_similarity() -> None:
-    pairs = [
-        ("The movie was great", "The movie was terrible"),
-        ("I need to buy groceries", "The store was out of groceries"),
+    pool = [
+        "The movie was great",
+        "I need to buy groceries",
     ]
     selector = NearestSelector(similarity_fn=embeddings.cosine_similarity_fn())
-    selected = selector.select(pairs, k=1, query="This film was fantastic")
-    assert selected == [pairs[0]]
+    selected = selector.select(pool, k=1, query="This film was fantastic")
+    assert selected == [pool[0]]
 
 
 def test_diversity_selector_with_embeddings_similarity() -> None:
-    pairs = [
-        ("The movie was great", "The movie was terrible"),
-        ("The film was excellent", "The film was awful"),
-        ("I need to buy groceries", "The store was out of groceries"),
+    pool = [
+        "The movie was great",
+        "The film was excellent",
+        "I need to buy groceries",
     ]
     selector = DiversitySelector(similarity_fn=embeddings.cosine_similarity_fn())
-    selected = selector.select(pairs, k=2)
-    assert selected[0] == pairs[0]
-    assert selected[1] == pairs[2]
+    selected = selector.select(pool, k=2)
+    assert selected[0] == pool[0]
+    assert selected[1] == pool[2]

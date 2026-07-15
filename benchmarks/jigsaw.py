@@ -20,7 +20,7 @@ import random
 from datasets import Dataset, concatenate_datasets
 from datasets import load_dataset as _load_dataset
 
-from pntx.types import NEGATIVE, POSITIVE, Label, Pair
+from pntx.types import NEGATIVE, POSITIVE, Label
 
 DATASET_NAME = "google/civil_comments"
 
@@ -57,22 +57,21 @@ def label_for(
     return None
 
 
-def sample_pairs(
+def sample_pools(
     dataset: Dataset,
     seed: int,
-    n_pairs: int,
+    n_per_side: int,
     *,
     clean_threshold: float = DEFAULT_CLEAN_THRESHOLD,
     toxic_threshold: float = DEFAULT_TOXIC_THRESHOLD,
-) -> list[Pair]:
-    """Sample ``n_pairs`` (positive, negative) pairs for use as ``PNTX.fit`` exemplars.
+) -> tuple[list[str], list[str]]:
+    """Sample ``n_per_side`` positive texts and ``n_per_side`` negative texts
+    for use as ``PNTX.fit(positive=..., negative=...)`` pools.
 
-    Each side is sampled independently and zipped together -- these are not
-    paraphrase pairs of the same underlying comment, just unrelated examples
-    of each label (Civil Comments doesn't provide toxic/non-toxic rewrites
-    of the same text). Pass the same ``seed`` to ``sample_eval_set`` (with a
-    matching ``n_pairs_used``) to draw its rows from the same shuffled
-    ordering without overlapping these.
+    The two sides are independent pools, sampled separately -- pntx doesn't
+    need them aligned into pairs. Pass the same ``seed`` to
+    ``sample_eval_set`` (with a matching ``n_per_side``) to draw its rows
+    from the same shuffled ordering without overlapping these.
     """
     positive_texts = _shuffled_label_texts(
         dataset, POSITIVE, seed, clean_threshold, toxic_threshold
@@ -80,13 +79,13 @@ def sample_pairs(
     negative_texts = _shuffled_label_texts(
         dataset, NEGATIVE, seed, clean_threshold, toxic_threshold
     )
-    return list(zip(positive_texts[:n_pairs], negative_texts[:n_pairs], strict=True))
+    return positive_texts[:n_per_side], negative_texts[:n_per_side]
 
 
 def sample_eval_set(
     dataset: Dataset,
     seed: int,
-    n_pairs_used: int,
+    n_per_side: int,
     n_eval: int,
     *,
     clean_threshold: float = DEFAULT_CLEAN_THRESHOLD,
@@ -94,10 +93,10 @@ def sample_eval_set(
 ) -> list[tuple[str, Label]]:
     """Sample ``n_eval`` held-out ``(text, label)`` rows, balanced between labels.
 
-    ``seed`` and ``n_pairs_used`` must match the call to ``sample_pairs``
-    this is paired with, so this draws from the same per-label shuffled
-    ordering starting right after the rows ``sample_pairs`` already used
-    (no overlap between exemplars and eval set).
+    ``seed`` and ``n_per_side`` must match the call to ``sample_pools`` this
+    is paired with, so this draws from the same per-label shuffled ordering
+    starting right after the rows ``sample_pools`` already used (no overlap
+    between exemplars and eval set).
     """
     positive_texts = _shuffled_label_texts(
         dataset, POSITIVE, seed, clean_threshold, toxic_threshold
@@ -108,11 +107,9 @@ def sample_eval_set(
     n_positive = n_eval // 2
     n_negative = n_eval - n_positive
     eval_set: list[tuple[str, Label]] = [
-        (text, POSITIVE)
-        for text in positive_texts[n_pairs_used : n_pairs_used + n_positive]
+        (text, POSITIVE) for text in positive_texts[n_per_side : n_per_side + n_positive]
     ] + [
-        (text, NEGATIVE)
-        for text in negative_texts[n_pairs_used : n_pairs_used + n_negative]
+        (text, NEGATIVE) for text in negative_texts[n_per_side : n_per_side + n_negative]
     ]
     random.Random(seed).shuffle(eval_set)
     return eval_set

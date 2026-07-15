@@ -1,33 +1,35 @@
 # pntx
 
-`pntx` is a Python library that turns a handful of user-supplied `(positive, negative)`
-text pairs into:
+`pntx` is a Python library that turns user-supplied `positive`/`negative` text pools
+into:
 
-1. **Generation** — synthesize new text on either side of the pair.
+1. **Generation** — synthesize new text on either side.
 2. **Classification** — label arbitrary text as `positive` or `negative`.
 
 The meaning of "positive" and "negative" is entirely up to you. It doesn't have to be
 sentiment — it can be formal/casual, policy-compliant/violating, or any other contrast
-you define with examples. `pntx` never interprets the pairs; it only uses them as
-few-shot and scoring material.
+you define with examples. `pntx` never interprets the pools; it only uses them as
+few-shot and scoring material. `positive` and `negative` are independent pools, not
+aligned pairs — they don't need to be the same length or otherwise correspond to each
+other (e.g. sampling straight from an existing labeled dataset works fine). Fitting just
+one side is also valid, e.g. to smoke-test generation from a single example.
 
 ```python
 from pntx import PNTX
 
 model = PNTX(backend="llama", model_path="model.gguf")
 
-pairs = [
-    ("The movie was fantastic", "The movie was boring"),
-    ("Support was quick and helpful", "Support was slow and unhelpful"),
-]
-model.fit(pairs)
+model.fit(
+    positive=["The movie was fantastic", "Support was quick and helpful"],
+    negative=["The movie was boring", "Support was slow and unhelpful"],
+)
 
 # Generation
 texts = model.generate(
     n=20,
     side="positive",
     temperature=1.0,
-    dedup=True,          # filter near-duplicates (of each other and of the seed pairs)
+    dedup=True,          # filter near-duplicates (of each other and of the fitted pools)
     verify=True,         # self-classify and reject anything that doesn't match `side`
     min_confidence=0.8,  # confidence threshold used by verify
 )
@@ -98,12 +100,13 @@ model = PNTX(
 
 ## Selecting exemplars
 
-When there are more fitted pairs than comfortably fit in a prompt, a `Selector`
-decides which ones to use:
+When there are more fitted texts (on either side) than comfortably fit in a prompt, a
+`Selector` decides which ones to use — it's called independently for the `positive` and
+`negative` pools:
 
 - **`RandomSelector`** (default) — a uniform random subset.
-- **`NearestSelector`** — picks pairs whose text is most similar to the text being
-  classified; dynamic, per-query selection.
+- **`NearestSelector`** — picks texts most similar to the text being classified;
+  dynamic, per-query selection.
 - **`DiversitySelector`** — greedily picks a maximally diverse subset.
 
 Both `NearestSelector` and `DiversitySelector` take a `similarity_fn`. It defaults to

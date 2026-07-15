@@ -2,14 +2,28 @@ from __future__ import annotations
 
 from pntx import prompts
 
-from .conftest import SAMPLE_PAIRS
+from .conftest import SAMPLE_NEGATIVE, SAMPLE_POSITIVE
 
 
-def test_build_exemplar_prefix_includes_every_pair_with_its_label() -> None:
-    prefix = prompts.build_exemplar_prefix(SAMPLE_PAIRS)
-    for pos, neg in SAMPLE_PAIRS:
+def test_build_exemplar_prefix_includes_every_text_with_its_label() -> None:
+    prefix = prompts.build_exemplar_prefix(SAMPLE_POSITIVE, SAMPLE_NEGATIVE)
+    for pos in SAMPLE_POSITIVE:
         assert f"Text: {pos}\nLabel: positive" in prefix
+    for neg in SAMPLE_NEGATIVE:
         assert f"Text: {neg}\nLabel: negative" in prefix
+
+
+def test_build_exemplar_prefix_with_positive_only_pool_has_no_negative_lines() -> None:
+    prefix = prompts.build_exemplar_prefix(SAMPLE_POSITIVE, [])
+    assert "Label: negative" not in prefix
+    for pos in SAMPLE_POSITIVE:
+        assert f"Text: {pos}\nLabel: positive" in prefix
+
+
+def test_build_exemplar_prefix_with_unequal_pool_sizes_keeps_every_text() -> None:
+    prefix = prompts.build_exemplar_prefix(SAMPLE_POSITIVE, SAMPLE_NEGATIVE[:1])
+    assert prefix.count("Label: positive") == len(SAMPLE_POSITIVE)
+    assert prefix.count("Label: negative") == 1
 
 
 def test_build_query_suffix_has_no_trailing_label() -> None:
@@ -18,10 +32,10 @@ def test_build_query_suffix_has_no_trailing_label() -> None:
 
 
 def test_build_classify_prompt_is_prefix_then_suffix() -> None:
-    prompt = prompts.build_classify_prompt(SAMPLE_PAIRS, "some query")
-    assert prompt == prompts.build_exemplar_prefix(SAMPLE_PAIRS) + prompts.build_query_suffix(
-        "some query"
-    )
+    prompt = prompts.build_classify_prompt(SAMPLE_POSITIVE, SAMPLE_NEGATIVE, "some query")
+    assert prompt == prompts.build_exemplar_prefix(
+        SAMPLE_POSITIVE, SAMPLE_NEGATIVE
+    ) + prompts.build_query_suffix("some query")
 
 
 def test_classify_choice_texts_matches_label_order() -> None:
@@ -33,13 +47,21 @@ def test_classify_choice_texts_matches_label_order() -> None:
 
 
 def test_build_generate_prompt_includes_exemplars_and_is_primed_for_item_one() -> None:
-    prompt = prompts.build_generate_prompt(SAMPLE_PAIRS, "positive", 5)
-    for pos, neg in SAMPLE_PAIRS:
+    prompt = prompts.build_generate_prompt(SAMPLE_POSITIVE, SAMPLE_NEGATIVE, "positive", 5)
+    for pos in SAMPLE_POSITIVE:
         assert f"positive: {pos}" in prompt
+    for neg in SAMPLE_NEGATIVE:
         assert f"negative: {neg}" in prompt
     assert "5" in prompt
     assert "positive texts" in prompt
     assert prompt.endswith("1. ")
+
+
+def test_build_generate_prompt_with_negative_only_pool_has_no_positive_exemplars() -> None:
+    prompt = prompts.build_generate_prompt([], SAMPLE_NEGATIVE, "negative", 3)
+    assert "- positive:" not in prompt
+    for neg in SAMPLE_NEGATIVE:
+        assert f"negative: {neg}" in prompt
 
 
 def test_parse_generated_texts_handles_numbered_list() -> None:

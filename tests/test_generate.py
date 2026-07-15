@@ -4,24 +4,24 @@ import pytest
 
 from pntx import PNTX, prompts
 
-from .conftest import SAMPLE_PAIRS, CompleteOnlyBackend, FakeBackend
+from .conftest import SAMPLE_NEGATIVE, SAMPLE_POSITIVE, CompleteOnlyBackend, FakeBackend
 
 
 def test_generate_zero_returns_empty_list_without_warning(recwarn: pytest.WarningsRecorder) -> None:
-    model = PNTX(backend=FakeBackend()).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=FakeBackend()).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
     assert model.generate(n=0, side="positive") == []
     assert len(recwarn) == 0
 
 
 def test_generate_rejects_negative_n() -> None:
-    model = PNTX(backend=FakeBackend()).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=FakeBackend()).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
     with pytest.raises(ValueError, match="n must be >= 0"):
         model.generate(n=-1, side="positive")
 
 
 def test_generate_without_verify_or_dedup_returns_parsed_candidates() -> None:
     backend = FakeBackend(complete_responses=["a\n2. b\n3. c"])
-    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=backend).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
 
     result = model.generate(n=3, side="positive", verify=False, dedup=False)
 
@@ -31,11 +31,25 @@ def test_generate_without_verify_or_dedup_returns_parsed_candidates() -> None:
 
 def test_generate_works_without_scoring_backend_when_verify_false() -> None:
     backend = CompleteOnlyBackend(complete_responses=["a\n2. b"])
-    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=backend).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
 
     result = model.generate(n=2, side="positive", verify=False, dedup=False)
 
     assert result == ["a", "b"]
+
+
+def test_generate_works_from_positive_only_pool() -> None:
+    # The smoke-test scenario: fit a single example on one side (no negative
+    # pool at all) and generate more of that side, without verify (which
+    # would need a negative pool to contrast against for a meaningful check).
+    backend = FakeBackend(complete_responses=["a\n2. b"])
+    model = PNTX(backend=backend).fit(positive=["only positive example"])
+
+    result = model.generate(n=2, side="positive", verify=False, dedup=False)
+
+    assert result == ["a", "b"]
+    assert "only positive example" in backend.complete_calls[0]
+    assert "- negative:" not in backend.complete_calls[0]
 
 
 def test_generate_verify_works_with_plain_backend_via_parsed_classify() -> None:
@@ -43,7 +57,7 @@ def test_generate_verify_works_with_plain_backend_via_parsed_classify() -> None:
     # through classify()'s parse-based fallback instead of requiring a
     # ScoringBackend.
     backend = CompleteOnlyBackend(complete_responses=["only candidate text", "positive"])
-    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=backend).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
 
     result = model.generate(n=1, side="positive", verify=True, dedup=False)
 
@@ -59,7 +73,7 @@ def test_generate_dedup_filters_near_duplicate_within_batch() -> None:
             "3. A completely unrelated sentence about weather"
         ]
     )
-    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=backend).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
 
     result = model.generate(n=2, side="positive", verify=False, dedup=True)
 
@@ -69,10 +83,10 @@ def test_generate_dedup_filters_near_duplicate_within_batch() -> None:
     ]
 
 
-def test_generate_dedup_filters_against_seed_pairs(recwarn: pytest.WarningsRecorder) -> None:
-    seed_text = SAMPLE_PAIRS[0][0]
+def test_generate_dedup_filters_against_seed_pools(recwarn: pytest.WarningsRecorder) -> None:
+    seed_text = SAMPLE_POSITIVE[0]
     backend = FakeBackend(complete_responses=[seed_text, seed_text])
-    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=backend).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
 
     result = model.generate(n=1, side="positive", verify=False, dedup=True, max_attempts=2)
 
@@ -86,9 +100,13 @@ def test_generate_verify_rejects_then_retries_then_succeeds() -> None:
     low_confidence_text = "low confidence candidate"
     good_text = "good candidate"
 
-    wrong_label_prompt = prompts.build_classify_prompt(SAMPLE_PAIRS, wrong_label_text)
-    low_confidence_prompt = prompts.build_classify_prompt(SAMPLE_PAIRS, low_confidence_text)
-    good_prompt = prompts.build_classify_prompt(SAMPLE_PAIRS, good_text)
+    wrong_label_prompt = prompts.build_classify_prompt(
+        SAMPLE_POSITIVE, SAMPLE_NEGATIVE, wrong_label_text
+    )
+    low_confidence_prompt = prompts.build_classify_prompt(
+        SAMPLE_POSITIVE, SAMPLE_NEGATIVE, low_confidence_text
+    )
+    good_prompt = prompts.build_classify_prompt(SAMPLE_POSITIVE, SAMPLE_NEGATIVE, good_text)
 
     backend = FakeBackend(
         choice_scores={
@@ -98,7 +116,7 @@ def test_generate_verify_rejects_then_retries_then_succeeds() -> None:
         },
         complete_responses=[wrong_label_text, low_confidence_text, good_text],
     )
-    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=backend).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
 
     result = model.generate(
         n=1, side="positive", verify=True, dedup=False, min_confidence=0.8, max_attempts=5
@@ -110,12 +128,12 @@ def test_generate_verify_rejects_then_retries_then_succeeds() -> None:
 
 def test_generate_hits_max_attempts_and_warns(recwarn: pytest.WarningsRecorder) -> None:
     bad_text = "always rejected"
-    bad_prompt = prompts.build_classify_prompt(SAMPLE_PAIRS, bad_text)
+    bad_prompt = prompts.build_classify_prompt(SAMPLE_POSITIVE, SAMPLE_NEGATIVE, bad_text)
     backend = FakeBackend(
         choice_scores={bad_prompt: [0.0, 3.0]},  # always classifies negative
         complete_responses=[bad_text, bad_text],
     )
-    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=backend).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
 
     result = model.generate(n=3, side="positive", verify=True, dedup=False, max_attempts=2)
 
@@ -126,7 +144,7 @@ def test_generate_hits_max_attempts_and_warns(recwarn: pytest.WarningsRecorder) 
 
 def test_generate_uses_selected_side_in_prompt() -> None:
     backend = FakeBackend(complete_responses=["x"])
-    model = PNTX(backend=backend).fit(SAMPLE_PAIRS)
+    model = PNTX(backend=backend).fit(positive=SAMPLE_POSITIVE, negative=SAMPLE_NEGATIVE)
 
     model.generate(n=1, side="negative", verify=False, dedup=False)
 

@@ -8,9 +8,6 @@ Label = Literal["positive", "negative"]
 POSITIVE: Label = "positive"
 NEGATIVE: Label = "negative"
 
-Pair = tuple[str, str]
-"""A single (positive, negative) example pair."""
-
 
 @dataclass(frozen=True, eq=False)
 class ClassifyResult:

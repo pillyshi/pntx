@@ -31,42 +31,42 @@ def test_label_for_thresholds() -> None:
     assert jigsaw.label_for(0.3) is None
 
 
-def test_sample_pairs_draws_from_correct_pools() -> None:
+def test_sample_pools_draws_from_correct_labels() -> None:
     dataset = _make_dataset()
-    pairs = jigsaw.sample_pairs(dataset, seed=0, n_pairs=5)
+    positive, negative = jigsaw.sample_pools(dataset, seed=0, n_per_side=5)
 
-    assert len(pairs) == 5
-    for positive_text, negative_text in pairs:
-        assert positive_text.startswith("clean-")
-        assert negative_text.startswith("toxic-")
+    assert len(positive) == 5
+    assert len(negative) == 5
+    assert all(text.startswith("clean-") for text in positive)
+    assert all(text.startswith("toxic-") for text in negative)
 
 
-def test_sample_pairs_is_deterministic() -> None:
+def test_sample_pools_is_deterministic() -> None:
     dataset = _make_dataset()
-    first = jigsaw.sample_pairs(dataset, seed=42, n_pairs=5)
-    second = jigsaw.sample_pairs(dataset, seed=42, n_pairs=5)
+    first = jigsaw.sample_pools(dataset, seed=42, n_per_side=5)
+    second = jigsaw.sample_pools(dataset, seed=42, n_per_side=5)
     assert first == second
 
 
-def test_sample_eval_set_is_balanced_and_disjoint_from_pairs() -> None:
+def test_sample_eval_set_is_balanced_and_disjoint_from_pools() -> None:
     dataset = _make_dataset()
-    n_pairs = 5
+    n_per_side = 5
     n_eval = 10
-    pairs = jigsaw.sample_pairs(dataset, seed=0, n_pairs=n_pairs)
-    eval_set = jigsaw.sample_eval_set(dataset, seed=0, n_pairs_used=n_pairs, n_eval=n_eval)
+    positive, negative = jigsaw.sample_pools(dataset, seed=0, n_per_side=n_per_side)
+    eval_set = jigsaw.sample_eval_set(dataset, seed=0, n_per_side=n_per_side, n_eval=n_eval)
 
     assert len(eval_set) == n_eval
     labels = [label for _, label in eval_set]
     assert labels.count(POSITIVE) == n_eval // 2
     assert labels.count(NEGATIVE) == n_eval - n_eval // 2
 
-    pair_texts = {text for pair in pairs for text in pair}
+    pool_texts = set(positive) | set(negative)
     eval_texts = {text for text, _ in eval_set}
-    assert pair_texts.isdisjoint(eval_texts)
+    assert pool_texts.isdisjoint(eval_texts)
 
 
 def test_sample_eval_set_never_returns_ambiguous_rows() -> None:
     dataset = _make_dataset()
-    eval_set = jigsaw.sample_eval_set(dataset, seed=0, n_pairs_used=0, n_eval=10)
+    eval_set = jigsaw.sample_eval_set(dataset, seed=0, n_per_side=0, n_eval=10)
     for text, _ in eval_set:
         assert not text.startswith("ambiguous-")

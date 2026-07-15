@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pntx.types import Pair
-
 
 class FakeBackend:
     """A canned-response ScoringBackend for testing, per CLAUDE.md's test conventions."""
@@ -77,8 +75,13 @@ class CompleteOnlyBackend:
         return ""
 
 
-SAMPLE_PAIRS: list[Pair] = [
-    ("この映画は最高だった", "この映画は退屈だった"),
-    ("サポートが丁寧で助かった", "サポートの対応が雑だった"),
-    ("店員さんの笑顔が素敵だった", "店員さんの態度が冷たかった"),
+SAMPLE_POSITIVE: list[str] = [
+    "この映画は最高だった",
+    "サポートが丁寧で助かった",
+    "店員さんの笑顔が素敵だった",
+]
+SAMPLE_NEGATIVE: list[str] = [
+    "この映画は退屈だった",
+    "サポートの対応が雑だった",
+    "店員さんの態度が冷たかった",
 ]

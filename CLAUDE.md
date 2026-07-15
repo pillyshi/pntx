@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 
-`pntx` は、ユーザが与える (positive, negative) テキストペアを学習素材として、
+`pntx` は、ユーザが与える positive / negative の2つのテキストプールを学習素材として、
 
 1. **生成**: 指定した側(正例 or 負例)のテキストを新たに生成する
 2. **分類**: 任意のテキストを positive / negative に分類する
@@ -10,7 +10,8 @@
 の2機能を提供する Python ライブラリ。
 
 重要な前提:
-- **正例/負例の意味論はユーザが定義する。** 感情ポジネガに限らず任意の対比軸(フォーマル/カジュアル、規約準拠/違反 など)を扱う。ライブラリはペアの意味を解釈せず、与えられたペアをそのまま few-shot 素材・スコアリング素材として使う。
+- **正例/負例の意味論はユーザが定義する。** 感情ポジネガに限らず任意の対比軸(フォーマル/カジュアル、規約準拠/違反 など)を扱う。ライブラリはプールの意味を解釈せず、与えられたテキストをそのまま few-shot 素材・スコアリング素材として使う。
+- **positive/negative はペアではなく独立したプール。** 1対1で対応している必要はない(例: 既存の分類データセットのように、正例と負例が別々に集まっているだけのケースが普通)。ユーザが意図的にミニマルペア(同じトピックで極性だけ違う対比例)を用意すればより効く場面もあるが、それはプールの中身の作り方の話であり、API 側で強制はしない。片側のプールだけで `fit` することも許容する(例: positive を1件だけ与えて `generate(side="positive", verify=False)` の動作確認をする、といった用途)。
 - **llama.cpp インプロセス実行が主戦場。** LLM API(Anthropic 等)は副次的バックエンド。設計判断で迷ったら llama.cpp での性能・体験を優先する。
 - 生成の用途は「データ拡張」と「成果物としての生成」の両方。前者は多様性、後者は品質を重視するが、メソッドは分けずパラメータで制御する。
 
@@ -21,18 +22,19 @@ from pntx import PNTX
 
 model = PNTX(backend=...)   # Backend インスタンス、または "llama" / "anthropic" 等の文字列
 
-pairs = [
-    ("この映画は最高だった", "この映画は退屈だった"),
-    ("サポートが丁寧で助かった", "サポートの対応が雑だった"),
-]
-model.fit(pairs)
+model.fit(
+    positive=["この映画は最高だった", "サポートが丁寧で助かった"],
+    negative=["この映画は退屈だった", "サポートの対応が雑だった"],
+)
+# 片側だけでも fit 可能(動作確認用途など):
+# model.fit(positive=["この映画は最高だった"])
 
 # 生成
 texts: list[str] = model.generate(
     n=20,
     side="positive",        # "positive" | "negative"
     temperature=1.0,
-    dedup=True,             # 生成物同士および seed ペアとの近似重複を除去
+    dedup=True,             # 生成物同士および fit したプール全体との近似重複を除去
     verify=True,            # 自己分類で side に一致しないものを棄却
     min_confidence=0.8,     # verify 時の棄却閾値
 )
@@ -67,17 +69,17 @@ class ScoringBackend(Backend, Protocol):
 
 ### fit と exemplar 選択(`pntx/selection.py`)
 
-- `fit(pairs)` はペアの保持と前処理のみ。学習は行わない。
-- ペア数がプロンプトに収まらない場合に備え、**プロンプトへ入れる代表ペアの選択戦略をプラガブルにする**:
+- `fit(positive=[...], negative=[...])` は2つのプールの保持と前処理のみ。学習は行わない。ペアリングを強制しない(zip などで無理にペアを捏造しない)。どちらか一方は空でもよいが、両方空は `ValueError`。
+- プールがプロンプトに収まらない場合に備え、**プロンプトへ入れる代表テキストの選択戦略をプラガブルにする**:
   - `RandomSelector`(デフォルト・最初に実装)
   - `DiversitySelector`(多様性最大化。埋め込みが必要なら optional 依存)
-  - `NearestSelector`(分類対象テキストに近いペアを動的選択。分類精度に効くので優先度高)
-- Selector は `select(pairs, k, query: str | None) -> list[pair]` のインターフェースで統一。
+  - `NearestSelector`(分類対象テキストに近いテキストを動的選択。分類精度に効くので優先度高)
+- Selector は `select(pool: list[str], k, query: str | None) -> list[str]` のインターフェースで統一。`positive`/`negative` それぞれに対して独立に呼ぶ(1回の呼び出しで両側を混ぜて扱わない)。`max_exemplars` は「片側あたり」の上限として解釈する。
 
 ### 生成ループ(`pntx/generate.py`)
 
 - `verify=True` のとき内部で classify を呼び、`side` と不一致 or `min_confidence` 未満を棄却。棄却で n に満たない場合は追加生成でリトライ(上限回数を設け、満たせなければ警告付きで返す)。
-- `dedup=True` のとき近似重複除去。初期実装は n-gram ベース(依存なし)でよい。埋め込みベースは optional。seed ペアとの重複除去も含む(データ拡張でほぼコピーを返さないため)。
+- `dedup=True` のとき近似重複除去。初期実装は n-gram ベース(依存なし)でよい。埋め込みベースは optional。fit した positive/negative プール全体との重複除去も含む(データ拡張でほぼコピーを返さないため)。
 
 ### classify_batch
 
@@ -109,6 +111,7 @@ class ScoringBackend(Backend, Protocol):
 - バックエンドは `FakeBackend`(決め打ち応答を返す `ScoringBackend` 実装)でモックし、分類ロジック・生成ループ・selector をユニットテストする。実モデル・実 API を叩くテストは `tests/integration/` に分離し、デフォルトでは skip。
 - 生成ループのテストは「verify で棄却→リトライ→上限到達で警告」の分岐を必ずカバーする。
 - dedup は日本語・英語両方のケースを入れる(n-gram の粒度に注意。日本語は文字 n-gram を使う)。
+- 片側のプールだけで `fit` → `generate(verify=False)` が動く、というスモークテスト経路も必ずカバーする。
 
 ## コーディング規約
 

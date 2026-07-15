@@ -1,14 +1,15 @@
 """t2pn (text -> positive/negative) classification benchmark, llama.cpp only.
 
-Fits a PNTX model on sampled Jigsaw/Civil Comments pairs, runs
-``classify_batch`` over a held-out eval set, and reports accuracy/F1/latency.
+Fits a PNTX model on sampled Jigsaw/Civil Comments positive/negative pools,
+runs ``classify_batch`` over a held-out eval set, and reports
+accuracy/F1/latency.
 
 Not run as part of CI or by this repo's own test suite -- it downloads the
 full Civil Comments dataset and needs a local gguf model, so it's meant to
 be run manually (e.g. on a GPU server), as a module from the repo root:
 
     uv run python -m benchmarks.t2pn.run --model-path /path/to/model.gguf \\
-        --n-gpu-layers -1 --selector random --n-pairs 50 --n-eval 200
+        --n-gpu-layers -1 --selector random --n-per-side 50 --n-eval 200
 """
 
 from __future__ import annotations
@@ -45,12 +46,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--n-ctx", type=int, default=4096)
     parser.add_argument("--selector", choices=sorted(_SELECTORS), default="random")
-    parser.add_argument("--n-pairs", type=int, default=50, help="Pairs to fit()")
+    parser.add_argument(
+        "--n-per-side", type=int, default=50, help="Positive/negative texts to fit() per side"
+    )
     parser.add_argument(
         "--max-exemplars",
         type=int,
         default=None,
-        help="Defaults to --n-pairs (use all fitted pairs)",
+        help="Defaults to --n-per-side (use all fitted texts)",
     )
     parser.add_argument("--n-eval", type=int, default=200, help="Held-out eval texts (balanced)")
     parser.add_argument("--seed", type=int, default=0)
@@ -63,27 +66,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    max_exemplars = args.max_exemplars if args.max_exemplars is not None else args.n_pairs
+    max_exemplars = args.max_exemplars if args.max_exemplars is not None else args.n_per_side
 
     print(f"Loading {jigsaw.DATASET_NAME} (cache_dir={args.cache_dir!r})...")
     dataset = jigsaw.load_dataset(cache_dir=args.cache_dir)
 
-    pairs = jigsaw.sample_pairs(
+    positive, negative = jigsaw.sample_pools(
         dataset,
         args.seed,
-        args.n_pairs,
+        args.n_per_side,
         clean_threshold=args.clean_threshold,
         toxic_threshold=args.toxic_threshold,
     )
     eval_set = jigsaw.sample_eval_set(
         dataset,
         args.seed,
-        args.n_pairs,
+        args.n_per_side,
         args.n_eval,
         clean_threshold=args.clean_threshold,
         toxic_threshold=args.toxic_threshold,
     )
-    print(f"Sampled {len(pairs)} exemplar pairs and {len(eval_set)} eval texts.")
+    print(
+        f"Sampled {len(positive)} positive + {len(negative)} negative exemplars "
+        f"and {len(eval_set)} eval texts."
+    )
 
     model = PNTX(
         backend="llama",
@@ -93,7 +99,7 @@ def main(argv: list[str] | None = None) -> None:
         selector=build_selector(args.selector),
         max_exemplars=max_exemplars,
     )
-    model.fit(pairs)
+    model.fit(positive=positive, negative=negative)
 
     eval_texts = [text for text, _ in eval_set]
     eval_labels = [label for _, label in eval_set]
@@ -103,7 +109,9 @@ def main(argv: list[str] | None = None) -> None:
     elapsed = time.perf_counter() - start
 
     computed = metrics.compute_metrics(eval_labels, results)
-    report = _build_report(args, max_exemplars, len(pairs), len(eval_set), elapsed, computed)
+    report = _build_report(
+        args, max_exemplars, len(positive), len(negative), len(eval_set), elapsed, computed
+    )
 
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
@@ -121,7 +129,8 @@ def _default_output_path(selector_name: str) -> Path:
 def _build_report(
     args: argparse.Namespace,
     max_exemplars: int,
-    n_pairs: int,
+    n_positive: int,
+    n_negative: int,
     n_eval: int,
     elapsed_seconds: float,
     computed: metrics.ClassificationMetrics,
@@ -133,7 +142,8 @@ def _build_report(
             "n_gpu_layers": args.n_gpu_layers,
             "n_ctx": args.n_ctx,
             "selector": args.selector,
-            "n_pairs": n_pairs,
+            "n_positive": n_positive,
+            "n_negative": n_negative,
             "max_exemplars": max_exemplars,
             "n_eval": n_eval,
             "seed": args.seed,

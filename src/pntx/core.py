@@ -10,7 +10,7 @@ from . import generate as generate_module
 from . import prompts
 from .backends.base import Backend, BatchBackend, BatchScoringBackend, ScoringBackend
 from .selection import RandomSelector, Selector
-from .types import ClassifyResult, Label, Pair
+from .types import ClassifyResult, Label
 
 _BACKEND_REGISTRY: dict[str, tuple[str, str]] = {
     "llama": ("pntx.backends.llama", "LlamaCppBackend"),
@@ -45,11 +45,13 @@ def _resolve_backend(backend: Backend | str, backend_kwargs: dict[str, Any]) -> 
 
 
 class PNTX:
-    """Generates and classifies text from user-defined (positive, negative) pairs.
+    """Generates and classifies text from user-defined positive/negative example pools.
 
-    The pairs' meaning is entirely up to the caller (sentiment, formality,
+    The pools' meaning is entirely up to the caller (sentiment, formality,
     policy compliance, ...); this class never interprets it, it only uses the
-    pairs as few-shot/scoring material.
+    pools as few-shot/scoring material. ``positive`` and ``negative`` are
+    independent pools, not aligned pairs -- they don't need to be the same
+    length or otherwise correspond to each other.
     """
 
     def __init__(
@@ -67,27 +69,42 @@ class PNTX:
         ``backend_kwargs`` are then forwarded to that backend's constructor
         (e.g. ``PNTX(backend="llama", model_path="model.gguf")``).
 
-        ``max_exemplars`` caps how many fitted pairs ``selector`` is asked to
-        pick for a single prompt; ``None`` means "as many as are fitted".
+        ``max_exemplars`` caps how many fitted texts ``selector`` is asked to
+        pick *per side* for a single prompt; ``None`` means "as many as are
+        fitted".
         """
         self.backend = _resolve_backend(backend, backend_kwargs)
         self.selector: Selector = selector if selector is not None else RandomSelector()
         self.max_exemplars = max_exemplars
-        self._pairs: list[Pair] = []
+        self._positive: list[str] = []
+        self._negative: list[str] = []
 
     @property
-    def pairs(self) -> list[Pair]:
-        return list(self._pairs)
+    def positive(self) -> list[str]:
+        return list(self._positive)
 
-    def fit(self, pairs: Iterable[Pair]) -> PNTX:
-        """Store the (positive, negative) pairs used as generation/classification material.
+    @property
+    def negative(self) -> list[str]:
+        return list(self._negative)
 
-        This only stores and validates ``pairs``; no training happens here.
+    def fit(self, positive: Iterable[str] = (), negative: Iterable[str] = ()) -> PNTX:
+        """Store the positive/negative example pools used as
+        generation/classification material.
+
+        ``positive`` and ``negative`` are independent pools -- they don't
+        need to be aligned pairs or even the same length. At least one of
+        them must be non-empty; fitting just one side is valid (e.g. to
+        smoke-test ``generate(side=..., verify=False)`` from a single
+        example) but degrades classification/verify quality since there's
+        nothing to contrast against. This only stores and validates the
+        pools; no training happens here.
         """
-        pairs = list(pairs)
-        if not pairs:
-            raise ValueError("pairs must be non-empty")
-        self._pairs = pairs
+        positive = list(positive)
+        negative = list(negative)
+        if not positive and not negative:
+            raise ValueError("at least one of positive or negative must be non-empty")
+        self._positive = positive
+        self._negative = negative
         return self
 
     def generate(
@@ -101,7 +118,7 @@ class PNTX:
         min_confidence: float = 0.8,
         max_attempts: int | None = None,
     ) -> list[str]:
-        """Generate up to ``n`` new ``side`` texts from the fitted pairs.
+        """Generate up to ``n`` new ``side`` texts from the fitted pools.
 
         If ``verify`` keeps rejecting candidates (wrong self-classified
         label, or confidence below ``min_confidence``), fewer than ``n``
@@ -114,9 +131,10 @@ class PNTX:
 
         texts = generate_module.run_generation_loop(
             backend=self.backend,
-            pairs=self._pairs,
+            positive=self._positive,
+            negative=self._negative,
             selector=self.selector,
-            exemplar_count=self._exemplar_count(),
+            max_exemplars=self.max_exemplars,
             classify=self.classify,
             n=n,
             side=side,
@@ -146,12 +164,17 @@ class PNTX:
         convention (not a calibrated probability).
         """
         self._check_fitted()
-        exemplars = self.selector.select(self._pairs, self._exemplar_count(), query=text)
+        positive = self.selector.select(
+            self._positive, self._exemplar_count(self._positive), query=text
+        )
+        negative = self.selector.select(
+            self._negative, self._exemplar_count(self._negative), query=text
+        )
         if isinstance(self.backend, ScoringBackend):
-            prompt = prompts.build_classify_prompt(exemplars, text)
+            prompt = prompts.build_classify_prompt(positive, negative, text)
             scores = self.backend.score_choices(prompt, prompts.classify_choice_texts())
             return _result_from_scores(scores)
-        prompt = prompts.build_classify_prompt(exemplars, text)
+        prompt = prompts.build_classify_prompt(positive, negative, text)
         raw = self.backend.complete(
             prompt, temperature=0.0, max_tokens=prompts.CLASSIFY_COMPLETION_MAX_TOKENS
         )
@@ -163,11 +186,16 @@ class PNTX:
         self._check_fitted()
         if not texts:
             return []
-        exemplars = self.selector.select(self._pairs, self._exemplar_count(), query=None)
+        positive = self.selector.select(
+            self._positive, self._exemplar_count(self._positive), query=None
+        )
+        negative = self.selector.select(
+            self._negative, self._exemplar_count(self._negative), query=None
+        )
 
         if isinstance(self.backend, ScoringBackend):
             choices = prompts.classify_choice_texts()
-            prefix = prompts.build_exemplar_prefix(exemplars)
+            prefix = prompts.build_exemplar_prefix(positive, negative)
             if isinstance(self.backend, BatchScoringBackend):
                 queries = [prompts.build_query_suffix(text) for text in texts]
                 all_scores = self.backend.score_choices_batch(prefix, queries, choices)
@@ -182,7 +210,9 @@ class PNTX:
                 ]
             return [_result_from_scores(scores) for scores in all_scores]
 
-        completion_prompts = [prompts.build_classify_prompt(exemplars, text) for text in texts]
+        completion_prompts = [
+            prompts.build_classify_prompt(positive, negative, text) for text in texts
+        ]
         if isinstance(self.backend, BatchBackend):
             raw_completions = self.backend.complete_batch(
                 completion_prompts,
@@ -201,12 +231,14 @@ class PNTX:
             ]
         return [_result_from_completion(raw) for raw in raw_completions]
 
-    def _exemplar_count(self) -> int:
-        return self.max_exemplars if self.max_exemplars is not None else len(self._pairs)
+    def _exemplar_count(self, pool: list[str]) -> int:
+        return self.max_exemplars if self.max_exemplars is not None else len(pool)
 
     def _check_fitted(self) -> None:
-        if not self._pairs:
-            raise RuntimeError("PNTX.fit(pairs) must be called before this method")
+        if not self._positive and not self._negative:
+            raise RuntimeError(
+                "PNTX.fit(positive=..., negative=...) must be called before this method"
+            )
 
 
 def _result_from_scores(scores: list[float]) -> ClassifyResult:
