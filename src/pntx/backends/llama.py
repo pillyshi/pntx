@@ -23,11 +23,36 @@ class LlamaCppBackend:
     this discards only the previous span, not the shared prefix).
     """
 
-    def __init__(self, model_path: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        model_path: str | None = None,
+        *,
+        repo_id: str | None = None,
+        filename: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Load a GGUF model, either from a local path or the Hugging Face Hub.
+
+        Exactly one of ``model_path`` or ``repo_id`` must be given. With
+        ``repo_id`` (optionally narrowed to one file via ``filename``), the
+        model is resolved through ``Llama.from_pretrained`` (downloaded and
+        cached under the standard Hugging Face Hub cache).
+
+        Remaining ``kwargs`` (e.g. ``n_ctx``, ``n_gpu_layers``, ``flash_attn``)
+        are forwarded as-is to ``llama_cpp.Llama``.
+        """
+        if (model_path is None) == (repo_id is None):
+            raise ValueError("exactly one of model_path or repo_id must be given")
         # Scoring needs per-token logits, which llama.cpp only keeps around
         # when logits_all=True.
         kwargs["logits_all"] = True
-        self._llm = llama_cpp.Llama(model_path=model_path, **kwargs)
+        if repo_id is not None:
+            self._llm = llama_cpp.Llama.from_pretrained(
+                repo_id=repo_id, filename=filename, **kwargs
+            )
+        else:
+            assert model_path is not None  # guaranteed by the check above
+            self._llm = llama_cpp.Llama(model_path=model_path, **kwargs)
 
     def complete(
         self,

@@ -80,6 +80,22 @@ from pntx.backends.llama import LlamaCppBackend
 model = PNTX(backend=LlamaCppBackend(model_path="model.gguf"))
 ```
 
+`LlamaCppBackend` accepts either a local `model_path` or a `repo_id` (optionally
+narrowed to one file with `filename`) to pull a GGUF model from the Hugging Face Hub
+via `Llama.from_pretrained`. Any other keyword — `n_ctx`, `n_gpu_layers`,
+`flash_attn`, `verbose`, ... — is forwarded as-is to `llama_cpp.Llama`:
+
+```python
+model = PNTX(
+    backend="llama",
+    repo_id="Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+    filename="*q4_k_m.gguf",
+    n_ctx=4096,
+    n_gpu_layers=-1,   # offload all layers to GPU
+    flash_attn=True,
+)
+```
+
 ## Selecting exemplars
 
 When there are more fitted pairs than comfortably fit in a prompt, a `Selector`
