@@ -2196,8 +2196,13 @@ wheels = [
 
 [[package]]
 name = "pntx"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "." }
+dependencies = [
+    { name = "pydantic" },
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-learn", version = "1.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
 
 [package.optional-dependencies]
 anthropic = [
@@ -2225,6 +2230,8 @@ dev = [
 requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'" },
     { name = "llama-cpp-python", marker = "extra == 'llama'" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "scikit-learn", specifier = ">=1.6" },
     { name = "sentence-transformers", marker = "extra == 'embeddings'" },
 ]
 provides-extras = ["llama", "anthropic", "embeddings"]

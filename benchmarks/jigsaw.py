@@ -66,7 +66,7 @@ def sample_pools(
     toxic_threshold: float = DEFAULT_TOXIC_THRESHOLD,
 ) -> tuple[list[str], list[str]]:
     """Sample ``n_per_side`` positive texts and ``n_per_side`` negative texts
-    for use as ``PNTX.fit(positive=..., negative=...)`` pools.
+    for use as ``t2pn.Classifier.fit(X, y)`` material.
 
     The two sides are independent pools, sampled separately -- pntx doesn't
     need them aligned into pairs. Pass the same ``seed`` to

@@ -4,53 +4,53 @@
 
 `pntx` は、ユーザが与える positive / negative の2つのテキストプールを学習素材として、
 
-1. **生成**: 指定した側(正例 or 負例)のテキストを新たに生成する
-2. **分類**: 任意のテキストを positive / negative に分類する
+1. **`t2pn`**(text → positive/negative): 任意のテキストを positive / negative に分類する。**scikit-learn の Classifier** として実装する。
+2. **`pn2t`**(positive/negative → text): 指定した側(正例)のテキストを新たに生成し、データセットを拡張する。**imbalanced-learn 流の OverSampler** として実装する。
 
-の2機能を提供する Python ライブラリ。
+の2コンポーネントを提供する Python ライブラリ。両者は同じ `pntx/backends/` を共有するが、公開 API 上は独立したクラスであり、両者を束ねるファサードクラスは持たない。
 
 重要な前提:
 - **正例/負例の意味論はユーザが定義する。** 感情ポジネガに限らず任意の対比軸(フォーマル/カジュアル、規約準拠/違反 など)を扱う。ライブラリはプールの意味を解釈せず、与えられたテキストをそのまま few-shot 素材・スコアリング素材として使う。
-- **positive/negative はペアではなく独立したプール。** 1対1で対応している必要はない(例: 既存の分類データセットのように、正例と負例が別々に集まっているだけのケースが普通)。ユーザが意図的にミニマルペア(同じトピックで極性だけ違う対比例)を用意すればより効く場面もあるが、それはプールの中身の作り方の話であり、API 側で強制はしない。片側のプールだけで `fit` することも許容する(例: positive を1件だけ与えて `generate(side="positive", verify=False)` の動作確認をする、といった用途)。
-- **llama.cpp インプロセス実行が主戦場。** LLM API(Anthropic 等)は副次的バックエンド。設計判断で迷ったら llama.cpp での性能・体験を優先する。
-- 生成の用途は「データ拡張」と「成果物としての生成」の両方。前者は多様性、後者は品質を重視するが、メソッドは分けずパラメータで制御する。
+- **入力は scikit-learn / imbalanced-learn の `(X, y)` 規約に合わせる。** `X: list[str]`(生テキスト)、`y`(0/1 または `"positive"`/`"negative"` などの2値ラベル)。ペアリングを強制しない点は従来通り(`y` でグルーピングした結果、positive/negative それぞれの件数が揃う必要はない)。**ただし `t2pn.Classifier.fit` / `pn2t.OverSampler.fit_resample` はどちらも両クラスが最低1件ずつ存在することを要求する**(旧仕様にあった「片側のプールだけで fit」というスモークテスト用途は、sklearn/imblearn の分類データセット規約を採用したことに伴い廃止)。
+- **llama.cpp インプロセス実行が主戦場。** LLM API(Anthropic 等)は副次的バックエンド。設計判断で迷ったら llama.cpp での性能・体験を優先する。`t2pn`・`pn2t` とも、LLM 呼び出しは共通の `Backend` 抽象を経由し、同じロード済みモデル(例: 同一の `LlamaCppBackend` インスタンス)を共有できるようにする。**それぞれが独自の LLM クライアントを持って別々にモデルをロードする実装は禁止**(ローカル推論のメモリ/VRAM を二重に食うため)。
+- **`pn2t` v1 のスコープはデータ拡張のみ、positive 側のみ。** 「成果物としての生成」(品質重視・任意サイド)は将来の拡張として明示的にスコープ外にする(後述)。
 
 ## 公開 API(この形を維持すること)
 
 ```python
-from pntx import PNTX
+from pntx.t2pn import Classifier
+from pntx.pn2t import OverSampler
 
-model = PNTX(backend=...)   # Backend インスタンス、または "llama" / "anthropic" 等の文字列
+# --- t2pn: 分類 (scikit-learn Classifier) ---
+clf = Classifier(backend=...)   # Backend インスタンス、または "llama" / "anthropic" 等の文字列
 
-model.fit(
-    positive=["この映画は最高だった", "サポートが丁寧で助かった"],
-    negative=["この映画は退屈だった", "サポートの対応が雑だった"],
-)
-# 片側だけでも fit 可能(動作確認用途など):
-# model.fit(positive=["この映画は最高だった"])
+X = ["この映画は最高だった", "サポートが丁寧で助かった", "この映画は退屈だった", "サポートの対応が雑だった"]
+y = ["positive", "positive", "negative", "negative"]   # 0/1 でも可
 
-# 生成
-texts: list[str] = model.generate(
-    n=20,
-    side="positive",        # "positive" | "negative"
-    temperature=1.0,
-    dedup=True,             # 生成物同士および fit したプール全体との近似重複を除去
-    verify=True,            # 自己分類で side に一致しないものを棄却
-    min_confidence=0.8,     # verify 時の棄却閾値
-)
+clf.fit(X, y)                 # 学習ではなくプール保持+前処理(旧 PNTX.fit と同じ)
+clf.predict(X)                # -> array-like of "positive"/"negative"(sklearn 標準の predict 契約)
+clf.predict_proba(X)          # -> shape (n_samples, 2) の確率行列
+clf.score(X, y)               # ClassifierMixin から無償で手に入る
 
-# 分類
-result = model.classify("店員さんの笑顔が素敵だった")
-result.label        # "positive" | "negative"
-result.confidence   # float (0.0–1.0)
-result == "positive"  # True になるよう __eq__ を実装
+# sklearn エコシステムにそのまま乗る
+from sklearn.model_selection import cross_val_score
+cross_val_score(clf, X, y, cv=5)
 
-results = model.classify_batch(texts)  # 必須。逐次呼び出しの単純ループにしないこと(後述)
+# --- pn2t: 生成 (imbalanced-learn 流 OverSampler) ---
+sampler = OverSampler(backend=..., n_synthesized=None)  # None は「バランスするまで」
+
+X_aug, y_aug = sampler.fit_resample(X, y)   # 生成された positive テキストが末尾に追加される
+sampler.generation_result_                  # boundary feature 分析 + 生成根拠(pydantic モデル)
+
+# imbalanced-learn の Pipeline にもそのまま乗る(imbalanced-learn 自体は必須依存にしない。
+# fit_resample を duck-typing で提供するだけで imblearn.pipeline.Pipeline は使える)
 ```
+
+`ClassifyResult`(`.label`/`.confidence`/`__eq__`)による1件ずつの結果表現は廃止し、`predict`/`predict_proba` は sklearn 標準の配列ベース契約に統一する。
 
 ## アーキテクチャ
 
-### バックエンド抽象(`pntx/backends/`)
+### バックエンド抽象(`pntx/backends/`)— 変更なし、`t2pn`/`pn2t` 共有
 
 ```python
 class Backend(Protocol):
@@ -61,68 +61,71 @@ class ScoringBackend(Backend, Protocol):
         """prompt に続く各 choice の対数尤度を返す。分類の主経路。"""
 ```
 
-- **LlamaCppBackend**(`llama-cpp-python` 使用): `ScoringBackend` を実装。`score_choices` は各 choice のトークン logprob 合計で実装する。共通 prefix の KV キャッシュ再利用を必ず行うこと(プロンプト設計側も、可変部分が末尾に来るよう共通 prefix を最大化する)。
-- **AnthropicBackend**: まず `Backend` のみ実装(テキスト生成をパースして分類)。構造化出力や logprobs が使える場合の `ScoringBackend` 化は後回しでよい。
-- 分類ロジックは二段構え:
-  - バックエンドが `ScoringBackend` → few-shot プロンプト末尾でラベルトークン(例: `positive` / `negative`)の logprob を比較。confidence は softmax で算出。
-  - そうでない → 生成テキストのパース。confidence はパース結果の確信度が取れなければ 1.0/0.5 等の規約値でよいが、docstring に明記する。
+- **LlamaCppBackend**(`llama-cpp-python` 使用): `ScoringBackend` を実装。`score_choices` は各 choice のトークン logprob 合計で実装する。共通 prefix の KV キャッシュ再利用を必ず行うこと。
+- **AnthropicBackend**: `Backend` のみ実装(テキスト生成をパースして分類/構造化出力)。
+- **構造化出力(pn2t が必要とする JSON スキーマ付き生成)は `Backend` プロトコルに新しいメソッドを追加しない。** `pntx/pn2t/` 側で `Backend.complete()` の上に薄いレイヤーを実装する: JSON 出力を促すプロンプト → `pydantic.BaseModel.model_validate_json()` でパース → `ValidationError` 時は限られた回数までリトライ。こうすることで Backend 抽象を変更せずに済み、`t2pn` と `pn2t` が同じ Backend 実装・同じロード済みモデルを共有できる。
 
-### fit と exemplar 選択(`pntx/selection.py`)
+### `t2pn.Classifier`(`pntx/t2pn.py`)
 
-- `fit(positive=[...], negative=[...])` は2つのプールの保持と前処理のみ。学習は行わない。ペアリングを強制しない(zip などで無理にペアを捏造しない)。どちらか一方は空でもよいが、両方空は `ValueError`。
-- プールがプロンプトに収まらない場合に備え、**プロンプトへ入れる代表テキストの選択戦略をプラガブルにする**:
-  - `RandomSelector`(デフォルト・最初に実装)
-  - `DiversitySelector`(多様性最大化。埋め込みが必要なら optional 依存)
-  - `NearestSelector`(分類対象テキストに近いテキストを動的選択。分類精度に効くので優先度高)
-- Selector は `select(pool: list[str], k, query: str | None) -> list[str]` のインターフェースで統一。`positive`/`negative` それぞれに対して独立に呼ぶ(1回の呼び出しで両側を混ぜて扱わない)。`max_exemplars` は「片側あたり」の上限として解釈する。
+- `sklearn.base.BaseEstimator` + `ClassifierMixin` を継承する。`X` は生テキストの list なので、数値配列を前提にした `check_X_y`/`check_array` を素通りさせるため estimator tags(`X_types: ["string"]` 相当、`no_validation` 系)を適切に設定すること。`sklearn.utils.estimator_checks.check_estimator` に literal に通す必要はないが、`Pipeline`/`cross_val_score` で壊れないことは確認する。
+- `fit(X, y)` は `y` でグルーピングして positive/negative プールを作るだけで、学習は行わない(旧 `PNTX.fit` のロジックを流用)。ラベルは 0/1 でも `"positive"`/`"negative"` 文字列でも受け付ける。
+- 分類ロジック自体(exemplar 選択 → プロンプト構築 → スコアリング or パース)は既存の `pntx/selection.py` / `pntx/prompts.py` / `core.py` の分類パスをそのまま移設する。二段構えの分岐(`ScoringBackend` なら logprob 比較、そうでなければ生成テキストのパース)も維持。
+- `predict_batch` 相当は `predict`/`predict_proba` がバッチを受け取れることで代替する(旧 `classify_batch` の「逐次 for ループ禁止、バックエンドごとに最適化」という制約はそのまま `predict`/`predict_proba` の内部実装に引き継ぐ)。
 
-### 生成ループ(`pntx/generate.py`)
+### exemplar 選択(`pntx/selection.py`)— 変更なし、`t2pn`/`pn2t` 共有
 
-- `verify=True` のとき内部で classify を呼び、`side` と不一致 or `min_confidence` 未満を棄却。棄却で n に満たない場合は追加生成でリトライ(上限回数を設け、満たせなければ警告付きで返す)。
-- `dedup=True` のとき近似重複除去。初期実装は n-gram ベース(依存なし)でよい。埋め込みベースは optional。fit した positive/negative プール全体との重複除去も含む(データ拡張でほぼコピーを返さないため)。
+- `RandomSelector` / `DiversitySelector` / `NearestSelector` は従来通り。`Selector.select(pool, k, query)` インターフェースも維持。
+- `pn2t.OverSampler` の exemplar サンプリングは「件数 k」ではなく「トークン予算」ベース(下記)なので、`Selector` をそのまま使うのではなく、予算ベースのサンプリングヘルパーを別途 `pntx/selection.py` に追加する(`sample_method` として `RandomSelector` 等と同じ戦略名を共有できる設計が望ましい)。
 
-### classify_batch
+### `pn2t.OverSampler`(`pntx/pn2t/`)— `semaxis.HardPositiveOverSampler` の完全移植 + Backend 統合
 
-- LlamaCppBackend: 共通 prefix の KV キャッシュを温めてから各入力を評価する。
-- AnthropicBackend: 並行リクエスト(`asyncio` + セマフォで同時数制限)。
-- 逐次 for ループ実装は不可。バックエンドごとに最適化する。
+- `sklearn.base.BaseEstimator` を継承する(imbalanced-learn の `BaseOverSampler` は継承しない。`fit_resample` を duck-typing で提供するだけで `imblearn.pipeline.Pipeline` から利用可能なため、`imbalanced-learn` 自体は必須依存に加えない)。
+- `fit_resample(X, y)`: 二値ラベルのみサポート(`{0, 1}`)。`y=1` を positive として扱い、生成されたテキストは `y=1` として末尾に追加される。**`pn2t` v1 は positive 側の生成のみ**(negative 側や3値以上への一般化は将来の拡張)。
+- アルゴリズムは semaxis 実装をそのまま踏襲:
+  1. positive/negative それぞれの exemplar をトークン予算内でサンプリング(`sample_method`: `random`/他、`context_limit` に基づく予算計算)。
+  2. positive/negative の特徴・境界特徴(boundary features)を LLM に分析させ、"専門家なら positive と判定するが浅い分類器は negative と誤判定しうる" hard positive テキストを `batch_size` 件ずつバッチ生成。
+  3. 完全一致ベースの dedup(`deduplicate=True` がデフォルト。元データ・既に採択した生成物との文字列一致のみを見る — 旧 `pntx/generate.py` にあった n-gram 近似重複除去とは別物で、v1 では使わない)。
+  4. `target_count`(`n_synthesized` 明示指定 or `None` でクラスバランスまで自動計算)に達するまでバッチ生成を繰り返し、上限バッチ数に達したら警告付きで打ち切る。
+- `generation_result_`(`positive_features`/`negative_features`/`boundary_features`/`hard_positives`、pydantic モデル)を fit 後に公開。`save(path)`/`load(path, backend=...)` で JSON へシリアライズ・復元できる。
+- コンストラクタ引数(`batch_size`, `max_examples_per_class`, `deduplicate`, `context_limit`, `language`, `seed`, `sample_method`, `verbose`, `logger`)は semaxis 版を踏襲しつつ、`llm: BaseLLMClient | str` は `backend: Backend | str` に置き換える(pntx の `_resolve_backend` を再利用)。
 
 ## パッケージング
 
-- 本体はゼロ依存(標準ライブラリのみ)を目指す。
-- optional dependencies:
+- **コア依存として `scikit-learn` と `pydantic` を必須にする**(`t2pn.Classifier` の Estimator 契約、`pn2t.OverSampler` の構造化出力検証にそれぞれ必須のため)。「本体はゼロ依存」という従来方針は撤回し、ゼロ依存の対象はバックエンド実装(LLM SDK)と埋め込み系に限定する。
+- optional dependencies(変更なし):
   - `pntx[llama]` → `llama-cpp-python`
   - `pntx[anthropic]` → `anthropic`
   - `pntx[embeddings]` → 埋め込みベースの dedup / DiversitySelector 用
 - 未インストールのバックエンドを使おうとしたら、インストールコマンドを含む明確な ImportError を出す。
-- `pyproject.toml`(hatchling or setuptools)、Python 3.10+。
+- `pyproject.toml`(`uv_build`)、Python 3.10+。
 
 ## 実装順序
 
-1. コア型(`ClassifyResult`、`Backend` / `ScoringBackend` Protocol)、`PNTX` 本体の骨格、`RandomSelector`
-2. `LlamaCppBackend`: complete / score_choices / KV キャッシュ再利用
-3. logprob 分類経路 + classify_batch(llama.cpp)
-4. 生成ループ(verify / dedup / リトライ)
-5. `AnthropicBackend` + パースベース分類 + 並行 batch
-6. `NearestSelector` / `DiversitySelector`、埋め込み optional
+1. 既存の `pntx/backends/`・`pntx/selection.py`・`pntx/prompts.py` はそのまま流用。`pntx/core.py`(`PNTX` ファサード)と `pntx/generate.py`(旧 verify/dedup 生成ループ)は削除。
+2. `pntx/t2pn.py`: 既存の分類ロジック(`core.py` の `classify`/`classify_batch` 相当)を sklearn `BaseEstimator`/`ClassifierMixin` に載せ替え。`fit(X, y)` のラベルグルーピング、text-input 用の estimator tags 設定。
+3. `pntx/pn2t/`: `Backend.complete()` 上の構造化出力ヘルパー(JSON プロンプト + pydantic 検証 + リトライ)。boundary feature プロンプト(`pntx/pn2t/prompts.py`)。予算ベース exemplar サンプリング。`HardPositiveOverSampler` のロジック本体の移植(`fit_resample`/`save`/`load`)。
+4. `benchmarks/t2pn/run.py` を新 `t2pn.Classifier` に合わせて更新。
+5. `AnthropicBackend` 経由での `t2pn`/`pn2t` 動作確認(構造化出力ヘルパーがバックエンド非依存であることの検証)。
+6. `NearestSelector`/`DiversitySelector` の `pn2t` 側サンプリングへの統合、埋め込み optional。
 
 ## テスト
 
-- バックエンドは `FakeBackend`(決め打ち応答を返す `ScoringBackend` 実装)でモックし、分類ロジック・生成ループ・selector をユニットテストする。実モデル・実 API を叩くテストは `tests/integration/` に分離し、デフォルトでは skip。
-- 生成ループのテストは「verify で棄却→リトライ→上限到達で警告」の分岐を必ずカバーする。
-- dedup は日本語・英語両方のケースを入れる(n-gram の粒度に注意。日本語は文字 n-gram を使う)。
-- 片側のプールだけで `fit` → `generate(verify=False)` が動く、というスモークテスト経路も必ずカバーする。
+- バックエンドは `FakeBackend`(決め打ち応答を返す `ScoringBackend` 実装)でモックする。実モデル・実 API を叩くテストは `tests/integration/` に分離し、デフォルトでは skip。
+- `t2pn.Classifier`: `fit`/`predict`/`predict_proba` のユニットテストに加えて、`sklearn.pipeline.Pipeline`・`cross_val_score` に組み込んで壊れないことを確認するテストを持つ。
+- `pn2t.OverSampler`: 「boundary feature 分析 → hard positive 生成 → dedup で棄却 → リトライ → 上限到達で警告」の分岐を必ずカバー。`n_synthesized=None` のクラスバランス自動計算、`save`/`load` の往復も対象。
+- dedup(完全一致)は日本語・英語両方のケースを入れる。
+- 旧仕様にあった「片側のプールだけで fit → generate(verify=False)」のスモークテストは廃止(前提の通り、両クラス1件以上が必須になったため)。
 
 ## コーディング規約
 
 - 型ヒント必須、`from __future__ import annotations` を使用。
 - ドキュメントとコメントは英語、README は英語 + 日本語(README.ja.md)。
 - ruff + mypy(strict)を CI に入れる。
-- プロンプトテンプレートはコード内にハードコードせず `pntx/prompts.py` に集約し、ユーザが差し替え可能にする。
+- プロンプトテンプレートはコード内にハードコードせず、`t2pn`/`pn2t` それぞれの `prompts.py` に集約し、ユーザが差し替え可能にする。
 
 ## やらないこと(スコープ外)
 
-- 3クラス以上の分類(将来検討。ただし内部設計で ["positive", "negative"] をハードコードした定数散在にはしない)
+- 3クラス以上の分類(将来検討。ただし内部設計で `["positive", "negative"]` をハードコードした定数散在にはしない)
+- `pn2t` の negative 側生成、および「成果物としての生成」(品質重視・任意サイド生成) — v1 は `HardPositiveOverSampler` 相当のデータ拡張用途のみ
 - ファインチューニング・埋め込み分類器の学習
 - CLI(ライブラリ API のみ。CLI は将来別途)
-

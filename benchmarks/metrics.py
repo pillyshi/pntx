@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pntx.types import NEGATIVE, POSITIVE, ClassifyResult, Label
+from pntx.types import NEGATIVE, POSITIVE, Label
 
 _LABELS: tuple[Label, Label] = (POSITIVE, NEGATIVE)
 
@@ -20,9 +20,19 @@ class ClassificationMetrics:
     mean_confidence: float
 
 
-def compute_metrics(y_true: list[Label], results: list[ClassifyResult]) -> ClassificationMetrics:
-    if len(y_true) != len(results):
-        raise ValueError(f"y_true has {len(y_true)} items but results has {len(results)}")
+def compute_metrics(
+    y_true: list[Label], y_pred: list[Label], y_proba: list[float]
+) -> ClassificationMetrics:
+    """Compute metrics from predictions.
+
+    ``y_proba`` is the predicted probability of *each item's predicted*
+    label (i.e. ``predict_proba(X)[i, class_index_of(y_pred[i])]``), used
+    only for ``mean_confidence``.
+    """
+    if len(y_true) != len(y_pred):
+        raise ValueError(f"y_true has {len(y_true)} items but y_pred has {len(y_pred)}")
+    if len(y_true) != len(y_proba):
+        raise ValueError(f"y_true has {len(y_true)} items but y_proba has {len(y_proba)}")
     if not y_true:
         raise ValueError("y_true must be non-empty")
 
@@ -30,8 +40,7 @@ def compute_metrics(y_true: list[Label], results: list[ClassifyResult]) -> Class
         (t, p): 0 for t in _LABELS for p in _LABELS
     }
     correct = 0
-    for true_label, result in zip(y_true, results, strict=True):
-        predicted_label = result.label
+    for true_label, predicted_label in zip(y_true, y_pred, strict=True):
         confusion[(true_label, predicted_label)] += 1
         if predicted_label == true_label:
             correct += 1
@@ -57,5 +66,5 @@ def compute_metrics(y_true: list[Label], results: list[ClassifyResult]) -> Class
         recall=recall,
         f1=f1,
         confusion=confusion,
-        mean_confidence=sum(r.confidence for r in results) / len(results),
+        mean_confidence=sum(y_proba) / len(y_proba),
     )

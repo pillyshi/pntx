@@ -1,7 +1,7 @@
 """t2pn (text -> positive/negative) classification benchmark, llama.cpp only.
 
-Fits a PNTX model on sampled Jigsaw/Civil Comments positive/negative pools,
-runs ``classify_batch`` over a held-out eval set, and reports
+Fits a t2pn.Classifier on sampled Jigsaw/Civil Comments positive/negative
+pools, runs predict/predict_proba over a held-out eval set, and reports
 accuracy/F1/latency.
 
 Not run as part of CI or by this repo's own test suite -- it downloads the
@@ -21,9 +21,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from benchmarks import jigsaw, metrics
-from pntx import PNTX
 from pntx.selection import DiversitySelector, NearestSelector, RandomSelector, Selector
+from pntx.t2pn import Classifier
 
 _SELECTORS: dict[str, type[Selector]] = {
     "random": RandomSelector,
@@ -91,24 +93,32 @@ def main(argv: list[str] | None = None) -> None:
         f"and {len(eval_set)} eval texts."
     )
 
-    model = PNTX(
+    clf = Classifier(
         backend="llama",
-        model_path=args.model_path,
-        n_gpu_layers=args.n_gpu_layers,
-        n_ctx=args.n_ctx,
+        backend_kwargs={
+            "model_path": args.model_path,
+            "n_gpu_layers": args.n_gpu_layers,
+            "n_ctx": args.n_ctx,
+        },
         selector=build_selector(args.selector),
         max_exemplars=max_exemplars,
     )
-    model.fit(positive=positive, negative=negative)
+    X_fit = positive + negative
+    y_fit = ["positive"] * len(positive) + ["negative"] * len(negative)
+    clf.fit(X_fit, y_fit)
 
     eval_texts = [text for text, _ in eval_set]
     eval_labels = [label for _, label in eval_set]
 
     start = time.perf_counter()
-    results = model.classify_batch(eval_texts)
+    proba = clf.predict_proba(eval_texts)
     elapsed = time.perf_counter() - start
 
-    computed = metrics.compute_metrics(eval_labels, results)
+    pred_indices = np.argmax(proba, axis=1)
+    y_pred = [clf.classes_[i] for i in pred_indices]
+    y_proba = [proba[i, pred_indices[i]] for i in range(len(eval_texts))]
+
+    computed = metrics.compute_metrics(eval_labels, y_pred, y_proba)
     report = _build_report(
         args, max_exemplars, len(positive), len(negative), len(eval_set), elapsed, computed
     )

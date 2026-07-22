@@ -1,6 +1,6 @@
 [project]
 name = "pntx"
-version = "0.4.0"
+version = "0.5.0"
 description = "Generate and classify text from user-defined positive/negative example pools"
 readme = "README.md"
 license = "MIT"
@@ -29,7 +29,10 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    "scikit-learn>=1.6",
+    "pydantic>=2",
+]
 
 [project.urls]
 Homepage = "https://github.com/pillyshi/pntx"
@@ -69,6 +72,14 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "datasets.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "sklearn.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tqdm.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
