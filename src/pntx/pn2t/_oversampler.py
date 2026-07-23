@@ -58,6 +58,14 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
     texts that experts would label positive but that shallow classifiers or
     untrained humans might label negative.
 
+    ``context_limit`` is the token budget for the *whole* per-batch prompt
+    (exemplars + fixed overhead), and ``max_tokens`` is reserved out of it
+    for the generation response -- pass a backend's actual context window
+    (e.g. ``LlamaCppBackend``'s ``n_ctx``) as ``context_limit`` rather than
+    subtracting an output reservation yourself; ``max_tokens`` already
+    accounts for that split (exemplar budget = ``(context_limit -
+    overhead - max_tokens) / 2``, per class).
+
     Fitted attributes:
         generation_result_: Full LLM response including feature analysis and
             per-sample evidence. Useful for auditing boundary-defining
@@ -86,6 +94,7 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         max_examples_per_class: int | None = None,
         deduplicate: bool = True,
         context_limit: int = 100_000,
+        max_tokens: int = 1024,
         language: str | None = None,
         seed: int | None = None,
         verbose: bool = False,
@@ -98,6 +107,7 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         self.max_examples_per_class = max_examples_per_class
         self.deduplicate = deduplicate
         self.context_limit = context_limit
+        self.max_tokens = max_tokens
         self.language = language
         self.seed = seed
         self.verbose = verbose
@@ -124,10 +134,14 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
                 "max_examples_per_class must be >= 1 or None, "
                 f"got {self.max_examples_per_class}"
             )
-        if (self.context_limit - _PROMPT_OVERHEAD) // 2 < 1:
+        if self.max_tokens < 1:
+            raise ValueError(f"max_tokens must be >= 1, got {self.max_tokens}")
+        if (self.context_limit - _PROMPT_OVERHEAD - self.max_tokens) // 2 < 1:
             raise ValueError(
-                f"context_limit ({self.context_limit}) leaves no token budget after "
-                f"overhead ({_PROMPT_OVERHEAD})"
+                f"context_limit ({self.context_limit}) leaves no token budget for exemplars "
+                f"after reserving overhead ({_PROMPT_OVERHEAD}) and max_tokens "
+                f"({self.max_tokens}) for the generation response; lower max_tokens or "
+                "raise context_limit"
             )
 
         y_list = list(y)
@@ -173,7 +187,7 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         if target_count == 0:
             return list(X), y_list
 
-        budget = (self.context_limit - _PROMPT_OVERHEAD) // 2
+        budget = (self.context_limit - _PROMPT_OVERHEAD - self.max_tokens) // 2
         tokenizer_fn = getattr(self.backend_, "count_tokens", _default_tokenizer)
         selector = BudgetSelector(tokenizer_fn=tokenizer_fn, token_budget=budget, seed=self.seed)
 
@@ -204,7 +218,11 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
                 )
                 try:
                     result = complete_structured(
-                        self.backend_, system, user, HardPositiveGenerationResult
+                        self.backend_,
+                        system,
+                        user,
+                        HardPositiveGenerationResult,
+                        max_tokens=self.max_tokens,
                     )
                 except Exception as e:
                     if not warned_exception:

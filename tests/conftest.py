@@ -12,6 +12,7 @@ class FakeBackend:
         self.choice_scores = choice_scores or {}
         self._complete_responses = list(complete_responses or [])
         self.complete_calls: list[str] = []
+        self.complete_max_tokens: list[int] = []
         self.score_calls: list[tuple[str, list[str]]] = []
 
     def complete(
@@ -23,6 +24,7 @@ class FakeBackend:
         stop: list[str] | None = None,
     ) -> str:
         self.complete_calls.append(prompt)
+        self.complete_max_tokens.append(max_tokens)
         if self._complete_responses:
             return self._complete_responses.pop(0)
         return ""

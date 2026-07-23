@@ -127,6 +127,30 @@ def test_shortfall_after_max_batches_warns() -> None:
     assert y_aug == y
 
 
+def test_max_tokens_is_forwarded_to_backend_complete() -> None:
+    X, y = _pools()
+    backend = FakeBackend(
+        complete_responses=[_canned([_hp("new hard positive 1"), _hp("new hard positive 2")])]
+    )
+    sampler = OverSampler(backend=backend, n_synthesized=2, batch_size=2, max_tokens=777)
+    sampler.fit_resample(X, y)
+    assert backend.complete_max_tokens == [777]
+
+
+def test_context_limit_too_small_for_max_tokens_raises() -> None:
+    X, y = _pools()
+    # Regression test: previously max_tokens for the generation call was
+    # hardcoded independently of context_limit, so a small backend n_ctx
+    # (e.g. 4096) combined with the old hardcoded max_tokens=4096 default
+    # left zero room for the prompt and every batch silently failed. Now
+    # this mismatch is caught up front with a clear error instead.
+    sampler = OverSampler(
+        backend=FakeBackend(), n_synthesized=2, context_limit=4096, max_tokens=4096
+    )
+    with pytest.raises(ValueError, match="leaves no token budget for exemplars"):
+        sampler.fit_resample(X, y)
+
+
 def test_backend_kwargs_with_instance_backend_raises() -> None:
     sampler = OverSampler(backend=FakeBackend(), backend_kwargs={"foo": "bar"})
     with pytest.raises(TypeError, match="backend_kwargs"):
