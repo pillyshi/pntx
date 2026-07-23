@@ -38,3 +38,23 @@ def is_near_duplicate(
 ) -> bool:
     """Whether ``text`` is an approximate duplicate of any text in ``others``."""
     return any(similarity(text, other) >= threshold for other in others)
+
+
+def contains_verbatim_span(text: str, sources: Iterable[str], min_len: int = 20) -> bool:
+    """Whether ``text`` contains a verbatim substring of length ``>= min_len``
+    copied from any text in ``sources``.
+
+    Character-based and language-agnostic, like the rest of this module. This
+    is a much narrower check than :func:`is_near_duplicate`'s whole-text
+    Jaccard similarity: it only flags exact contiguous copies (e.g. a name or
+    phrase pasted straight through from an exemplar), not stylistic or
+    topical overlap, and it won't catch a paraphrased leak.
+    """
+    if len(text) < min_len:
+        return False
+    return any(
+        text[i : i + min_len] in source
+        for source in sources
+        if len(source) >= min_len
+        for i in range(len(text) - min_len + 1)
+    )

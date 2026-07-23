@@ -60,3 +60,24 @@ def test_is_near_duplicate_checks_every_candidate() -> None:
         "この映画は最高だった",
         ["まったく無関係な文章です", "この映画は最高だった!"],
     )
+
+
+def test_contains_verbatim_span_detects_copied_substring() -> None:
+    source = "田中太郎さんが2024年1月にサポートセンターに問い合わせをしてくれた"
+    text = "先日、田中太郎さんが2024年1月にサポートセンターに問い合わせをしてくれて助かった"
+    assert dedup.contains_verbatim_span(text, [source], min_len=20)
+
+
+def test_contains_verbatim_span_false_for_short_or_no_overlap() -> None:
+    source = "この映画は最高だった、また観に行きたい"
+    text = "サポートの対応がとても丁寧で感動した"
+    assert not dedup.contains_verbatim_span(text, [source], min_len=20)
+
+
+def test_contains_verbatim_span_respects_min_len_threshold() -> None:
+    source = "サポートが丁寧で助かった"
+    text = "サポートが丁寧で本当に助かった、また利用したい"
+    # "サポートが丁寧で" is a 8-char shared prefix; below a 20-char threshold
+    # it isn't flagged, but a low enough threshold catches it.
+    assert not dedup.contains_verbatim_span(text, [source], min_len=20)
+    assert dedup.contains_verbatim_span(text, [source], min_len=8)

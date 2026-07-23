@@ -25,3 +25,18 @@ class HardPositiveGenerationResult(BaseModel):
     negative_features: list[str]
     boundary_features: list[BoundaryFeature]
     hard_positives: list[HardPositive]
+
+
+class SyntheticText(BaseModel):
+    """One generated synthetic-positive text plus an auditable anonymization note."""
+
+    text: str
+    generalized_from: list[str]
+
+
+class SyntheticGenerationResult(BaseModel):
+    """Full structured output of one ``SyntheticSampler`` generation batch."""
+
+    style_features: list[str]
+    content_features: list[str]
+    synthetic_texts: list[SyntheticText]

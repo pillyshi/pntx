@@ -5,7 +5,7 @@
 `pntx` は、ユーザが与える positive / negative の2つのテキストプールを学習素材として、
 
 1. **`t2pn`**(text → positive/negative): 任意のテキストを positive / negative に分類する。**scikit-learn の Classifier** として実装する。
-2. **`pn2t`**(positive/negative → text): 指定した側(正例)のテキストを新たに生成し、データセットを拡張する。**imbalanced-learn 流の OverSampler** として実装する。
+2. **`pn2t`**(positive/negative → text): 指定した側(正例)のテキストを新たに生成する。**imbalanced-learn 流の OverSampler** として実装する。目的の異なる2つの Sampler を持つ: `OverSampler`(分類器学習データ拡張用の hard positive 生成)と `SyntheticSampler`(データ公開用途の匿名化された代表的合成データ生成)。
 
 の2コンポーネントを提供する Python ライブラリ。両者は同じ `pntx/backends/` を共有するが、公開 API 上は独立したクラスであり、両者を束ねるファサードクラスは持たない。
 
@@ -13,7 +13,7 @@
 - **正例/負例の意味論はユーザが定義する。** 感情ポジネガに限らず任意の対比軸(フォーマル/カジュアル、規約準拠/違反 など)を扱う。ライブラリはプールの意味を解釈せず、与えられたテキストをそのまま few-shot 素材・スコアリング素材として使う。
 - **入力は scikit-learn / imbalanced-learn の `(X, y)` 規約に合わせる。** `X: list[str]`(生テキスト)、`y`(0/1 または `"positive"`/`"negative"` などの2値ラベル)。ペアリングを強制しない点は従来通り(`y` でグルーピングした結果、positive/negative それぞれの件数が揃う必要はない)。**ただし `t2pn.Classifier.fit` / `pn2t.OverSampler.fit_resample` はどちらも両クラスが最低1件ずつ存在することを要求する**(旧仕様にあった「片側のプールだけで fit」というスモークテスト用途は、sklearn/imblearn の分類データセット規約を採用したことに伴い廃止)。
 - **llama.cpp インプロセス実行が主戦場。** LLM API(Anthropic 等)は副次的バックエンド。設計判断で迷ったら llama.cpp での性能・体験を優先する。`t2pn`・`pn2t` とも、LLM 呼び出しは共通の `Backend` 抽象を経由し、同じロード済みモデル(例: 同一の `LlamaCppBackend` インスタンス)を共有できるようにする。**それぞれが独自の LLM クライアントを持って別々にモデルをロードする実装は禁止**(ローカル推論のメモリ/VRAM を二重に食うため)。
-- **`pn2t` v1 のスコープはデータ拡張のみ、positive 側のみ。** 「成果物としての生成」(品質重視・任意サイド)は将来の拡張として明示的にスコープ外にする(後述)。
+- **`pn2t` には目的の異なる2つの Sampler がある。** `OverSampler`(分類器学習データ拡張、hard positive)と `SyntheticSampler`(匿名化された代表的合成データ、データ公開用途)。どちらも positive 側のみ生成、二値ラベル `{0, 1}` のみサポートという制約は共通。negative 側生成、3値以上への一般化は引き続きスコープ外(後述)。
 
 ## 公開 API(この形を維持すること)
 
@@ -44,6 +44,14 @@ sampler.generation_result_                  # boundary feature 分析 + 生成�
 
 # imbalanced-learn の Pipeline にもそのまま乗る(imbalanced-learn 自体は必須依存にしない。
 # fit_resample を duck-typing で提供するだけで imblearn.pipeline.Pipeline は使える)
+
+# --- pn2t: 匿名化された合成データ生成 (SyntheticSampler) ---
+from pntx.pn2t import SyntheticSampler
+
+sampler = SyntheticSampler(backend=..., n_synthesized=10)  # デフォルトなし、必須指定
+
+X_syn, y_syn = sampler.fit_resample(X, y)     # negative は検証にのみ使い、プロンプトには含めない
+sampler.generation_result_.synthetic_texts    # 生成テキスト + 監査用の generalized_from(何を一般化したか)
 ```
 
 `ClassifyResult`(`.label`/`.confidence`/`__eq__`)による1件ずつの結果表現は廃止し、`predict`/`predict_proba` は sklearn 標準の配列ベース契約に統一する。
@@ -84,10 +92,20 @@ class ScoringBackend(Backend, Protocol):
 - アルゴリズムは semaxis 実装をそのまま踏襲:
   1. positive/negative それぞれの exemplar をトークン予算内でサンプリング(`sample_method`: `random`/他、`context_limit` に基づく予算計算)。
   2. positive/negative の特徴・境界特徴(boundary features)を LLM に分析させ、"専門家なら positive と判定するが浅い分類器は negative と誤判定しうる" hard positive テキストを `batch_size` 件ずつバッチ生成。
-  3. 完全一致ベースの dedup(`deduplicate=True` がデフォルト。元データ・既に採択した生成物との文字列一致のみを見る — 旧 `pntx/generate.py` にあった n-gram 近似重複除去とは別物で、v1 では使わない)。
+  3. 完全一致ベースの dedup(`deduplicate=True` がデフォルト。元データ・既に採択した生成物との文字列一致のみを見る — 旧 `pntx/generate.py` にあった n-gram 近似重複除去とは別物で、v1 では使わない)。`SyntheticSampler` はこれとは別目的の漏洩検出レイヤーを追加で持つ(下記)。
   4. `target_count`(`n_synthesized` 明示指定 or `None` でクラスバランスまで自動計算)に達するまでバッチ生成を繰り返し、上限バッチ数に達したら警告付きで打ち切る。
 - `generation_result_`(`positive_features`/`negative_features`/`boundary_features`/`hard_positives`、pydantic モデル)を fit 後に公開。`save(path)`/`load(path, backend=...)` で JSON へシリアライズ・復元できる。
 - コンストラクタ引数(`batch_size`, `max_examples_per_class`, `deduplicate`, `context_limit`, `language`, `seed`, `sample_method`, `verbose`, `logger`)は semaxis 版を踏襲しつつ、`llm: BaseLLMClient | str` は `backend: Backend | str` に置き換える(pntx の `_resolve_backend` を再利用)。
+
+### `pn2t.SyntheticSampler`(`pntx/pn2t/`)— 匿名化された代表的合成データ生成
+
+- `OverSampler` とは独立したクラス(モード/パラメータではない)。目的関数が逆: `OverSampler` は境界を突く hard positive、`SyntheticSampler` は典型的・平均的な positive を、原文の具体的な情報(固有名詞・人名・日付・数値・場所など)を含まないよう生成する。ユースケースはプライバシー上公開できない元テキストプールの代わりに、分布を代表する合成データセットを公開すること。
+- `resolve_backend`・`LLMEstimatorMixin`・`selection.sample_group`/`_SAMPLE_METHODS`・`pn2t._structured.complete_structured`(変更なしでそのまま再利用可能)など、`OverSampler` と同じ共有インフラの上に構築する。
+- `fit_resample(X, y)` は `OverSampler` と同じ契約(二値ラベル、両クラス最低1件)を維持するが、**negative 側はラベル検証にのみ使い、生成プロンプトには含めない**(境界フレーミングを避けるため、かつ「positive に本質的 vs この1例に固有」の判断は複数の positive exemplar の共通性から行えるため)。
+- `n_synthesized` に `OverSampler` のような「`None` でクラスバランスまで自動計算」という挙動はない(自然な目標がないため)。**デフォルトなしの必須パラメータ**にする。
+- exemplar サンプリングは positive 側のみ(`OverSampler` の pos/neg 予算折半・バランス調整ロジックは不要)。token budget は `context_limit - overhead - max_tokens`(`OverSampler` と異なり `// 2` しない)。
+- 匿名性はプロンプト指示だけでなく、`pntx.dedup.contains_verbatim_span(text, sources, min_len)` によるベストエフォートの漏洩検出でも担保する: 生成テキストが positive プールから `min_verbatim_span`(デフォルト20文字)以上の連続部分文字列をそのままコピーしていたら reject してリトライする。これは `OverSampler` の完全一致 dedup とも旧 n-gram 近似重複除去とも別物(近似重複検出ではなく漏洩検出が目的、パラフレーズされた漏洩までは検出できないヒューリスティック)。
+- `generation_result_`(`style_features`/`content_features`/`synthetic_texts`、pydantic モデル)を fit 後に公開。各 `synthetic_texts[].generalized_from` は「何を一般化したかの種類」の監査ログであり、元の具体的内容そのものを含めないようプロンプトで明示的に禁止する(この監査フィールド自体が漏洩経路にならないようにするため)。`save`/`load` は `OverSampler` と同じ JSON ラウンドトリップパターン。
 
 ## パッケージング
 
@@ -113,7 +131,8 @@ class ScoringBackend(Backend, Protocol):
 - バックエンドは `FakeBackend`(決め打ち応答を返す `ScoringBackend` 実装)でモックする。実モデル・実 API を叩くテストは `tests/integration/` に分離し、デフォルトでは skip。
 - `t2pn.Classifier`: `fit`/`predict`/`predict_proba` のユニットテストに加えて、`sklearn.pipeline.Pipeline`・`cross_val_score` に組み込んで壊れないことを確認するテストを持つ。
 - `pn2t.OverSampler`: 「boundary feature 分析 → hard positive 生成 → dedup で棄却 → リトライ → 上限到達で警告」の分岐を必ずカバー。`n_synthesized=None` のクラスバランス自動計算、`save`/`load` の往復も対象。
-- dedup(完全一致)は日本語・英語両方のケースを入れる。
+- `pn2t.SyntheticSampler`: `OverSampler` と同様の分岐に加え、negative 側がプロンプトに含まれないことの直接検証、`contains_verbatim_span` による漏洩 dedup(reject → リトライ、`min_verbatim_span` 可変、`deduplicate=False` で無効化されること)を必ずカバー。
+- dedup(完全一致・`contains_verbatim_span`)は日本語・英語両方のケースを入れる。
 - 旧仕様にあった「片側のプールだけで fit → generate(verify=False)」のスモークテストは廃止(前提の通り、両クラス1件以上が必須になったため)。
 
 ## コーディング規約
@@ -126,6 +145,7 @@ class ScoringBackend(Backend, Protocol):
 ## やらないこと(スコープ外)
 
 - 3クラス以上の分類(将来検討。ただし内部設計で `["positive", "negative"]` をハードコードした定数散在にはしない)
-- `pn2t` の negative 側生成、および「成果物としての生成」(品質重視・任意サイド生成) — v1 は `HardPositiveOverSampler` 相当のデータ拡張用途のみ
+- `pn2t` の negative 側生成(hard negative 相当)は引き続きスコープ外
+- 「成果物としての生成」(品質重視・任意サイド生成)は `pn2t.SyntheticSampler` として実装済み。ただし意味的なパラフレーズ漏洩の自動検出(embedding ベースの類似度検証等)は引き続きスコープ外 — `contains_verbatim_span` による verbatim コピー検出のみのベストエフォート
 - ファインチューニング・埋め込み分類器の学習
 - CLI(ライブラリ API のみ。CLI は将来別途)

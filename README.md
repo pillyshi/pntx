@@ -6,9 +6,11 @@ into two independent components:
 1. **`pntx.t2pn.Classifier`** (text → positive/negative) — a
    [scikit-learn](https://scikit-learn.org/) `Classifier`: label arbitrary text as
    `positive` or `negative`.
-2. **`pntx.pn2t.OverSampler`** (positive/negative → text) — an
-   [imbalanced-learn](https://imbalanced-learn.org/)-style oversampler: generate new
-   "hard positive" text to balance an imbalanced dataset.
+2. **`pntx.pn2t`** (positive/negative → text) — two
+   [imbalanced-learn](https://imbalanced-learn.org/)-style oversamplers with different
+   goals: **`OverSampler`** generates "hard positive" text to balance an imbalanced
+   dataset for classifier training, and **`SyntheticSampler`** generates anonymized,
+   representative synthetic positives for publishing data you can't share as-is.
 
 The meaning of "positive" and "negative" is entirely up to you. It doesn't have to be
 sentiment — it can be formal/casual, policy-compliant/violating, or any other contrast
@@ -39,6 +41,15 @@ sampler = OverSampler(backend="llama", backend_kwargs={"model_path": "model.gguf
 
 X_aug, y_aug = sampler.fit_resample(X, [1, 1, 0, 0])  # binary labels only; positive class = 1
 sampler.generation_result_.hard_positives  # generated texts + the LLM's rationale for each
+
+# --- pn2t: anonymized synthetic data generation ---
+from pntx.pn2t import SyntheticSampler
+
+synth = SyntheticSampler(
+    backend="llama", backend_kwargs={"model_path": "model.gguf"}, n_synthesized=10
+)
+X_syn, y_syn = synth.fit_resample(X, [1, 1, 0, 0])
+synth.generation_result_.synthetic_texts  # generated texts + what was generalized away for each
 ```
 
 `OverSampler.fit_resample` generates "hard positives" — texts an expert would label
@@ -50,6 +61,18 @@ routed through `pntx`'s own `Backend` abstraction so it can share a loaded model
 supports binary `{0, 1}` labels; `imbalanced-learn` itself isn't required (`fit_resample`
 is duck-typed, so `imblearn.pipeline.Pipeline` still works if it's installed
 separately).
+
+`SyntheticSampler.fit_resample` has a different goal: instead of hard positives for
+classifier augmentation, it generates *typical* positive-class texts with specific
+identifying details (names, exact dates/numbers, locations, verbatim phrases) generalized
+away, so the result is safe to publish even when the original pool isn't. The negative
+pool is still required (for the same binary-label validation as `OverSampler`), but it's
+never shown to the backend — only positive exemplars inform generation, since contrasting
+against negatives would frame generation around the boundary rather than the typical
+case. Anonymity is best-effort: besides the prompt instructions, a lightweight verbatim-
+substring check (`min_verbatim_span`, default 20 characters) rejects and retries any
+generated text that copies a long span straight out of a positive exemplar — this catches
+copy-through leaks but not paraphrased ones, so it's not a privacy guarantee.
 
 ## Installation
 
@@ -69,7 +92,7 @@ it raises a clear `ImportError` with the install command to run.
 
 ## Backends
 
-`pntx` runs models two ways, shared by both `Classifier` and `OverSampler`:
+`pntx` runs models two ways, shared by `Classifier`, `OverSampler`, and `SyntheticSampler`:
 
 - **`LlamaCppBackend`** (`pntx[llama]`) — runs a GGUF model in-process via
   `llama-cpp-python`. This is the primary, most-tuned backend: classification uses
@@ -92,8 +115,8 @@ clf = Classifier(backend=LlamaCppBackend(model_path="model.gguf"))
 ```
 
 `backend_kwargs` is only used when `backend` is given as a string; it's a single dict
-(rather than `**kwargs`) so `Classifier`/`OverSampler` stay compatible with
-scikit-learn's `get_params()`/`clone()`.
+(rather than `**kwargs`) so `Classifier`/`OverSampler`/`SyntheticSampler` stay compatible
+with scikit-learn's `get_params()`/`clone()`.
 
 `LlamaCppBackend` accepts either a local `model_path` or a `repo_id` (optionally
 narrowed to one file with `filename`) to pull a GGUF model from the Hugging Face Hub
@@ -113,9 +136,9 @@ clf = Classifier(
 )
 ```
 
-To share one loaded model between `Classifier` and `OverSampler` (recommended for
-local inference — avoids loading the same GGUF twice), construct the backend once and
-pass the instance to both:
+To share one loaded model across `Classifier`, `OverSampler`, and `SyntheticSampler`
+(recommended for local inference — avoids loading the same GGUF twice), construct the
+backend once and pass the instance to each:
 
 ```python
 from pntx.backends.llama import LlamaCppBackend
@@ -123,6 +146,7 @@ from pntx.backends.llama import LlamaCppBackend
 backend = LlamaCppBackend(model_path="model.gguf")
 clf = Classifier(backend=backend)
 sampler = OverSampler(backend=backend)
+synth = SyntheticSampler(backend=backend, n_synthesized=10)
 ```
 
 ## Selecting exemplars
@@ -150,9 +174,10 @@ from pntx.selection import NearestSelector
 clf = Classifier(backend="llama", backend_kwargs={"model_path": "model.gguf"}, selector=NearestSelector())
 ```
 
-`OverSampler` doesn't take a `Selector`; instead its `sample_method` constructor
-argument picks a *budget-based* sampling strategy (a full port of semaxis's own
-`sample_method`/`embedding_model`):
+`OverSampler` and `SyntheticSampler` don't take a `Selector`; instead their
+`sample_method` constructor argument picks a *budget-based* sampling strategy (a full
+port of semaxis's own `sample_method`/`embedding_model` for `OverSampler`;
+`SyntheticSampler` reuses the same mechanism for its positive-only exemplar sampling):
 
 - **`"random"`** (default) — a uniform random subset, filled until the token budget
   runs out (`BudgetSelector` under the hood).
