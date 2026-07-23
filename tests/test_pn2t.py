@@ -153,6 +153,74 @@ def test_context_limit_too_small_for_max_tokens_raises() -> None:
         sampler.fit_resample(X, y)
 
 
+def test_no_positive_example_fits_budget_raises() -> None:
+    # context_limit=600, max_tokens=90 -> per-class budget = (600-500-90)//2 = 5
+    # tokens. The default tokenizer is len(text)//4 + 1, so a 50-char
+    # positive text costs 13 tokens and can never fit -- this must be caught
+    # up front instead of silently sending "(none)" as the positive exemplars.
+    X = ["x" * 50, "ok"]
+    y = [1, 0]
+    sampler = OverSampler(
+        backend=FakeBackend(), n_synthesized=1, context_limit=600, max_tokens=90
+    )
+    with pytest.raises(ValueError, match="no positive example fits"):
+        sampler.fit_resample(X, y)
+
+
+def test_no_negative_example_fits_budget_raises() -> None:
+    X = ["ok", "y" * 50]
+    y = [1, 0]
+    sampler = OverSampler(
+        backend=FakeBackend(), n_synthesized=1, context_limit=600, max_tokens=90
+    )
+    with pytest.raises(ValueError, match="no negative example fits"):
+        sampler.fit_resample(X, y)
+
+
+def test_exemplar_sampling_balances_positive_and_negative_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pntx.pn2t import prompts as prompts_mod
+
+    real_build_user_message = prompts_mod.build_user_message
+    captured: dict[str, list[str]] = {}
+
+    def _capturing_build_user_message(
+        *,
+        pos_texts: list[str],
+        neg_texts: list[str],
+        n_synthesized: int,
+        language: str | None = None,
+    ) -> str:
+        captured["pos"] = list(pos_texts)
+        captured["neg"] = list(neg_texts)
+        return real_build_user_message(
+            pos_texts=pos_texts, neg_texts=neg_texts, n_synthesized=n_synthesized, language=language
+        )
+
+    monkeypatch.setattr(prompts_mod, "build_user_message", _capturing_build_user_message)
+
+    # context_limit=624, max_tokens=100 -> per-class budget = (624-500-100)//2 = 12.
+    # 5 one-token positives all fit (5 <= 12); 5 five-token negatives only
+    # let 2 fit (10 <= 12, a 3rd would be 15 > 12) -- an unbalanced 5-vs-2
+    # split unless the post-sampling balancing step trims the positive side
+    # down to match.
+    pos_texts = ["a", "b", "c", "d", "e"]
+    neg_texts = [f"{'n' * 16}{i}" for i in range(5)]
+    X = pos_texts + neg_texts
+    y = [1] * len(pos_texts) + [0] * len(neg_texts)
+
+    backend = FakeBackend(complete_responses=[_canned([_hp("gen 1")])])
+    sampler = OverSampler(
+        backend=backend, n_synthesized=1, batch_size=1, context_limit=624, max_tokens=100
+    )
+    sampler.fit_resample(X, y)
+
+    assert captured["pos"]
+    assert captured["neg"]
+    assert len(captured["pos"]) == len(captured["neg"]) == 2
+
+
 def test_invalid_sample_method_raises() -> None:
     X, y = _pools()
     sampler = OverSampler(backend=FakeBackend(), n_synthesized=2, sample_method="bogus")

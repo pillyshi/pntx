@@ -74,17 +74,19 @@ class BudgetSelector:
     """Selects as many texts from ``pool`` as fit within a token budget.
 
     Ported from ``semaxis``'s ``HardPositiveOverSampler`` sampling strategy
-    (``sample_texts_within_budget``): ``pool`` is shuffled, then texts are
-    added one by one until the next one would push the running token total
-    over ``token_budget`` -- at which point selection stops (remaining,
-    possibly-shorter texts are *not* tried, matching the ported behavior).
+    (``sample_texts_within_budget``), with one deviation: ``pool`` is
+    shuffled, then texts are scanned in that order and added whenever they
+    still fit under the running token total; a candidate that would push the
+    total over ``token_budget`` is skipped (not selected), and scanning
+    continues with the next one, so a single oversized candidate can't stop
+    shorter ones later in the shuffle from being picked up.
 
     Unlike the other selectors, this one does *not* short-circuit to
     ``list(pool)`` when ``k >= len(pool)``: the budget is the real
     constraint here, and the whole point is to keep prompts within it even
     when every text in the pool would otherwise be included. ``k`` still
     acts as a secondary cap on top of the budget (e.g. from
-    ``PNTX(max_exemplars=...)``); ``query`` is ignored.
+    ``t2pn.Classifier(max_exemplars=...)``); ``query`` is ignored.
 
     ``tokenizer_fn`` should match whatever backend is doing the actual
     tokenizing (e.g. ``LlamaCppBackend.count_tokens``), so the budget
@@ -115,7 +117,7 @@ class BudgetSelector:
             text = pool[idx]
             count = self.tokenizer_fn(text)
             if total_tokens + count > self.token_budget:
-                break
+                continue
             selected.append(text)
             total_tokens += count
         return selected
@@ -262,13 +264,18 @@ def _estimate_n(texts: list[str], token_budget: int, tokenizer_fn: Callable[[str
 def _trim_to_budget(
     texts: list[str], token_budget: int, tokenizer_fn: Callable[[str], int]
 ) -> list[str]:
-    """Trims a list of texts to fit within the token budget, preserving order."""
+    """Trims a list of texts to fit within the token budget, preserving order.
+
+    Skips (rather than stops at) any text that alone would push the running
+    total over ``token_budget``, so a single oversized text can't crowd out
+    shorter ones later in ``texts``.
+    """
     result: list[str] = []
     total = 0
     for text in texts:
         count = tokenizer_fn(text)
         if total + count > token_budget:
-            break
+            continue
         result.append(text)
         total += count
     return result

@@ -207,6 +207,24 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
 
         budget = (self.context_limit - _PROMPT_OVERHEAD - self.max_tokens) // 2
         tokenizer_fn = getattr(self.backend_, "count_tokens", _default_tokenizer)
+
+        shortest_pos = min(tokenizer_fn(t) for t in pos_texts)
+        if shortest_pos > budget:
+            raise ValueError(
+                f"no positive example fits within the per-class exemplar budget "
+                f"({budget} tokens); the shortest positive text is {shortest_pos} "
+                "tokens. Raise context_limit, lower max_tokens, or remove the "
+                "outlier text."
+            )
+        shortest_neg = min(tokenizer_fn(t) for t in neg_texts)
+        if shortest_neg > budget:
+            raise ValueError(
+                f"no negative example fits within the per-class exemplar budget "
+                f"({budget} tokens); the shortest negative text is {shortest_neg} "
+                "tokens. Raise context_limit, lower max_tokens, or remove the "
+                "outlier text."
+            )
+
         rng = random.Random(self.seed)
 
         original_texts = set(X)
@@ -225,6 +243,15 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
 
                 pos_sampled = self._sample_prompt_examples(pos_texts, budget, tokenizer_fn, rng)
                 neg_sampled = self._sample_prompt_examples(neg_texts, budget, tokenizer_fn, rng)
+                # Each side is sampled within the same token budget, but text
+                # length differs per class, so item counts can end up
+                # unequal; trim the larger side down so the boundary-feature
+                # analysis sees a balanced number of examples per class.
+                n_balanced = min(len(pos_sampled), len(neg_sampled))
+                if len(pos_sampled) > n_balanced:
+                    pos_sampled = rng.sample(pos_sampled, n_balanced)
+                if len(neg_sampled) > n_balanced:
+                    neg_sampled = rng.sample(neg_sampled, n_balanced)
                 batch_count = min(self.batch_size, remaining)
 
                 system = prompts.build_system_message()

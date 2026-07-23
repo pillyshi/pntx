@@ -12,6 +12,7 @@ from pntx.selection import (
     DiversitySelector,
     NearestSelector,
     RandomSelector,
+    _trim_to_budget,
     sample_group,
     sample_texts_kmeans,
     sample_texts_votek,
@@ -119,6 +120,19 @@ def test_budget_selector_stops_when_budget_is_exhausted() -> None:
     assert len(selected) == 2
     assert len(set(selected)) == 2
     assert all(text in pool for text in selected)
+
+
+def test_budget_selector_skips_oversized_candidate_instead_of_stopping() -> None:
+    pool = ["huge", "a", "b", "c", "d", "e"]
+    costs = {"huge": 100, "a": 1, "b": 1, "c": 1, "d": 1, "e": 1}
+    # Regardless of shuffle order, "huge" alone blows the budget and must be
+    # skipped rather than aborting the whole scan -- every cost-1 text still
+    # fits and should all be selected.
+    for seed in range(10):
+        selector = BudgetSelector(tokenizer_fn=lambda t: costs[t], token_budget=10, seed=seed)
+        selected = selector.select(pool, k=100)
+        assert "huge" not in selected
+        assert set(selected) == {"a", "b", "c", "d", "e"}
 
 
 def test_budget_selector_does_not_shortcut_when_k_covers_whole_pool() -> None:
@@ -316,3 +330,12 @@ def test_sample_group_trims_kmeans_result_to_budget(monkeypatch: pytest.MonkeyPa
         embedding_model="fake-model", rng=random.Random(0),
     )
     assert len(selected) <= 1
+
+
+def test_trim_to_budget_skips_oversized_text_instead_of_stopping() -> None:
+    costs = {"huge": 100, "a": 1, "b": 1, "c": 1}
+    # "huge" leads the list and alone exceeds the budget; it must be skipped
+    # rather than aborting the scan, so the shorter texts after it still get
+    # included.
+    trimmed = _trim_to_budget(["huge", "a", "b", "c"], 10, lambda t: costs[t])
+    assert trimmed == ["a", "b", "c"]

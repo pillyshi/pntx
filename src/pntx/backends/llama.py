@@ -166,7 +166,7 @@ class LlamaCppBackend:
             f"prompt ({len(tokens)} tokens) exceeds the available context budget "
             f"({budget} of {n_ctx} tokens, after reserving {reserve} for the "
             "response); dropping the oldest exemplars to fit. Pass "
-            "PNTX(max_exemplars=...) to select fewer exemplars deliberately "
+            "t2pn.Classifier(max_exemplars=...) to select fewer exemplars deliberately "
             "instead of relying on this truncation.",
             UserWarning,
             stacklevel=3,
