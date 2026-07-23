@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import warnings
 from math import ceil
 from typing import Any, Protocol
@@ -12,7 +13,7 @@ from sklearn.base import BaseEstimator
 from .._backend_resolve import resolve_backend
 from .._sklearn import LLMEstimatorMixin
 from ..backends.base import Backend
-from ..selection import BudgetSelector
+from ..selection import _SAMPLE_METHODS, sample_group
 from . import prompts
 from ._structured import complete_structured
 from ._types import HardPositiveGenerationResult
@@ -66,6 +67,15 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
     accounts for that split (exemplar budget = ``(context_limit -
     overhead - max_tokens) / 2``, per class).
 
+    ``sample_method`` picks how exemplars are chosen from each side's pool
+    within that per-class token budget: ``"random"`` (default) is a uniform
+    random subset; ``"kmeans"``/``"votek"`` embed the pool via
+    ``embedding_model`` (a sentence-transformers model name, requires the
+    ``pntx[embeddings]`` extra) and pick one representative text per K-Means
+    cluster, or run the Vote-K algorithm (Su et al. 2022), respectively --
+    both aim for a more representative/diverse exemplar set than a random
+    subset.
+
     Fitted attributes:
         generation_result_: Full LLM response including feature analysis and
             per-sample evidence. Useful for auditing boundary-defining
@@ -97,6 +107,8 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         max_tokens: int = 1024,
         language: str | None = None,
         seed: int | None = None,
+        sample_method: str = "random",
+        embedding_model: str = "paraphrase-albert-small-v2",
         verbose: bool = False,
         logger: _Logger | None = None,
     ) -> None:
@@ -110,6 +122,8 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         self.max_tokens = max_tokens
         self.language = language
         self.seed = seed
+        self.sample_method = sample_method
+        self.embedding_model = embedding_model
         self.verbose = verbose
         self.logger = logger
 
@@ -136,6 +150,10 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
             )
         if self.max_tokens < 1:
             raise ValueError(f"max_tokens must be >= 1, got {self.max_tokens}")
+        if self.sample_method not in _SAMPLE_METHODS:
+            raise ValueError(
+                f"sample_method must be one of {_SAMPLE_METHODS}, got {self.sample_method!r}"
+            )
         if (self.context_limit - _PROMPT_OVERHEAD - self.max_tokens) // 2 < 1:
             raise ValueError(
                 f"context_limit ({self.context_limit}) leaves no token budget for exemplars "
@@ -189,7 +207,7 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
 
         budget = (self.context_limit - _PROMPT_OVERHEAD - self.max_tokens) // 2
         tokenizer_fn = getattr(self.backend_, "count_tokens", _default_tokenizer)
-        selector = BudgetSelector(tokenizer_fn=tokenizer_fn, token_budget=budget, seed=self.seed)
+        rng = random.Random(self.seed)
 
         original_texts = set(X)
         accepted_texts: set[str] = set()
@@ -205,8 +223,8 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
                 if remaining <= 0:
                     break
 
-                pos_sampled = self._sample_prompt_examples(pos_texts, selector)
-                neg_sampled = self._sample_prompt_examples(neg_texts, selector)
+                pos_sampled = self._sample_prompt_examples(pos_texts, budget, tokenizer_fn, rng)
+                neg_sampled = self._sample_prompt_examples(neg_texts, budget, tokenizer_fn, rng)
                 batch_count = min(self.batch_size, remaining)
 
                 system = prompts.build_system_message()
@@ -312,9 +330,19 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         obj.generation_result_ = HardPositiveGenerationResult.model_validate(data)
         return obj
 
-    def _sample_prompt_examples(self, texts: list[str], selector: BudgetSelector) -> list[str]:
-        k = self.max_examples_per_class if self.max_examples_per_class is not None else len(texts)
-        return selector.select(texts, k)
+    def _sample_prompt_examples(
+        self,
+        texts: list[str],
+        budget: int,
+        tokenizer_fn: Any,
+        rng: random.Random,
+    ) -> list[str]:
+        sampled = sample_group(
+            texts, budget, tokenizer_fn, self.sample_method, self.embedding_model, rng
+        )
+        if self.max_examples_per_class is not None and len(sampled) > self.max_examples_per_class:
+            sampled = rng.sample(sampled, self.max_examples_per_class)
+        return sampled
 
     def _accept_generated_text(
         self,

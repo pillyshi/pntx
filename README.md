@@ -150,6 +150,26 @@ from pntx.selection import NearestSelector
 clf = Classifier(backend="llama", backend_kwargs={"model_path": "model.gguf"}, selector=NearestSelector())
 ```
 
+`OverSampler` doesn't take a `Selector`; instead its `sample_method` constructor
+argument picks a *budget-based* sampling strategy (a full port of semaxis's own
+`sample_method`/`embedding_model`):
+
+- **`"random"`** (default) — a uniform random subset, filled until the token budget
+  runs out (`BudgetSelector` under the hood).
+- **`"kmeans"`** — embeds the pool via `embedding_model` (requires
+  `pntx[embeddings]`) and picks one representative text per K-Means cluster.
+- **`"votek"`** — embeds the pool and runs the Vote-K algorithm (Su et al. 2022),
+  balancing representativeness and diversity.
+
+```python
+sampler = OverSampler(
+    backend="llama",
+    backend_kwargs={"model_path": "model.gguf"},
+    sample_method="votek",
+    embedding_model="paraphrase-albert-small-v2",  # sentence-transformers model name
+)
+```
+
 ## Development
 
 ```bash

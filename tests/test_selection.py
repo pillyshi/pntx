@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+import random
+import sys
+import types
+
+import numpy as np
 import pytest
 
-from pntx.selection import BudgetSelector, DiversitySelector, NearestSelector, RandomSelector
+from pntx.selection import (
+    BudgetSelector,
+    DiversitySelector,
+    NearestSelector,
+    RandomSelector,
+    sample_group,
+    sample_texts_kmeans,
+    sample_texts_votek,
+)
 
 from .conftest import SAMPLE_POSITIVE
 
@@ -11,6 +24,14 @@ _TOPIC_POOL: list[str] = [
     "great customer service",
     "mountain hiking trip",
 ]
+
+
+def _fake_embeddings_module(embed_fn: object) -> types.ModuleType:
+    """Stands in for ``pntx.embeddings`` in tests so ``sample_group``'s
+    ``"kmeans"``/``"votek"`` branches don't require sentence-transformers."""
+    module = types.ModuleType("pntx.embeddings")
+    module.embed = embed_fn  # type: ignore[attr-defined]
+    return module
 
 
 def test_select_fewer_than_available_returns_k_distinct_texts() -> None:
@@ -185,3 +206,113 @@ def test_diversity_selector_ignores_query() -> None:
     without_query = selector.select(_TOPIC_POOL, k=2)
     with_query = selector.select(_TOPIC_POOL, k=2, query="irrelevant")
     assert without_query == with_query
+
+
+_TWO_CLUSTER_TEXTS = ["a1", "a2", "a3", "b1", "b2", "b3"]
+_TWO_CLUSTER_EMBEDDINGS = np.array(
+    [
+        [0.0, 0.0],
+        [0.1, 0.0],
+        [0.0, 0.1],
+        [10.0, 10.0],
+        [10.1, 10.0],
+        [10.0, 10.1],
+    ]
+)
+
+
+def test_sample_texts_kmeans_picks_one_text_per_cluster() -> None:
+    selected = sample_texts_kmeans(
+        _TWO_CLUSTER_TEXTS, 2, _TWO_CLUSTER_EMBEDDINGS, rng=random.Random(0)
+    )
+    assert len(selected) == 2
+    assert any(t in _TWO_CLUSTER_TEXTS[:3] for t in selected)
+    assert any(t in _TWO_CLUSTER_TEXTS[3:] for t in selected)
+
+
+def test_sample_texts_kmeans_n_zero_returns_empty() -> None:
+    assert sample_texts_kmeans(_TWO_CLUSTER_TEXTS, 0, _TWO_CLUSTER_EMBEDDINGS) == []
+
+
+def test_sample_texts_kmeans_n_covers_whole_pool_returns_all() -> None:
+    selected = sample_texts_kmeans(_TWO_CLUSTER_TEXTS, 100, _TWO_CLUSTER_EMBEDDINGS)
+    assert selected == _TWO_CLUSTER_TEXTS
+
+
+def test_sample_texts_votek_picks_one_text_per_cluster() -> None:
+    selected = sample_texts_votek(
+        _TWO_CLUSTER_TEXTS, 2, _TWO_CLUSTER_EMBEDDINGS, k=2, rng=random.Random(0)
+    )
+    assert len(selected) == 2
+    assert any(t in _TWO_CLUSTER_TEXTS[:3] for t in selected)
+    assert any(t in _TWO_CLUSTER_TEXTS[3:] for t in selected)
+
+
+def test_sample_texts_votek_n_zero_returns_empty() -> None:
+    assert sample_texts_votek(_TWO_CLUSTER_TEXTS, 0, _TWO_CLUSTER_EMBEDDINGS) == []
+
+
+def test_sample_texts_votek_n_covers_whole_pool_returns_all() -> None:
+    selected = sample_texts_votek(_TWO_CLUSTER_TEXTS, 100, _TWO_CLUSTER_EMBEDDINGS)
+    assert selected == _TWO_CLUSTER_TEXTS
+
+
+def test_sample_group_random_respects_budget() -> None:
+    pool = ["a", "b", "c", "d", "e"]
+    selected = sample_group(
+        pool, budget=25, tokenizer_fn=lambda t: 10, method="random",
+        embedding_model="unused", rng=random.Random(0),
+    )
+    # budget(25) // per-item cost(10) == 2 items fit.
+    assert len(selected) == 2
+    assert all(text in pool for text in selected)
+
+
+def test_sample_group_kmeans_uses_embeddings_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_embed(texts: list[str], model_name: str) -> list[list[float]]:
+        assert model_name == "fake-model"
+        return [_TWO_CLUSTER_EMBEDDINGS[_TWO_CLUSTER_TEXTS.index(t)].tolist() for t in texts]
+
+    monkeypatch.setitem(
+        sys.modules, "pntx.embeddings", _fake_embeddings_module(fake_embed)
+    )
+
+    selected = sample_group(
+        _TWO_CLUSTER_TEXTS, budget=10_000, tokenizer_fn=lambda t: 1, method="kmeans",
+        embedding_model="fake-model", rng=random.Random(0),
+    )
+    assert any(t in _TWO_CLUSTER_TEXTS[:3] for t in selected)
+    assert any(t in _TWO_CLUSTER_TEXTS[3:] for t in selected)
+
+
+def test_sample_group_votek_uses_embeddings_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_embed(texts: list[str], model_name: str) -> list[list[float]]:
+        return [_TWO_CLUSTER_EMBEDDINGS[_TWO_CLUSTER_TEXTS.index(t)].tolist() for t in texts]
+
+    monkeypatch.setitem(
+        sys.modules, "pntx.embeddings", _fake_embeddings_module(fake_embed)
+    )
+
+    selected = sample_group(
+        _TWO_CLUSTER_TEXTS, budget=10_000, tokenizer_fn=lambda t: 1, method="votek",
+        embedding_model="fake-model", rng=random.Random(0),
+    )
+    assert any(t in _TWO_CLUSTER_TEXTS[:3] for t in selected)
+    assert any(t in _TWO_CLUSTER_TEXTS[3:] for t in selected)
+
+
+def test_sample_group_trims_kmeans_result_to_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_embed(texts: list[str], model_name: str) -> list[list[float]]:
+        return [_TWO_CLUSTER_EMBEDDINGS[_TWO_CLUSTER_TEXTS.index(t)].tolist() for t in texts]
+
+    monkeypatch.setitem(
+        sys.modules, "pntx.embeddings", _fake_embeddings_module(fake_embed)
+    )
+
+    # Budget only fits 1 text (cost 10 each); the estimated n from _estimate_n
+    # may pick more, but _trim_to_budget must cut the result back down.
+    selected = sample_group(
+        _TWO_CLUSTER_TEXTS, budget=10, tokenizer_fn=lambda t: 10, method="kmeans",
+        embedding_model="fake-model", rng=random.Random(0),
+    )
+    assert len(selected) <= 1

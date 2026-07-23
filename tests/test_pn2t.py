@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -149,6 +151,48 @@ def test_context_limit_too_small_for_max_tokens_raises() -> None:
     )
     with pytest.raises(ValueError, match="leaves no token budget for exemplars"):
         sampler.fit_resample(X, y)
+
+
+def test_invalid_sample_method_raises() -> None:
+    X, y = _pools()
+    sampler = OverSampler(backend=FakeBackend(), n_synthesized=2, sample_method="bogus")
+    with pytest.raises(ValueError, match="sample_method"):
+        sampler.fit_resample(X, y)
+
+
+def _install_fake_embeddings_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stands in for ``pntx.embeddings`` so ``sample_method="kmeans"/"votek"``
+    tests don't require sentence-transformers to be installed."""
+
+    def fake_embed(texts: list[str], model_name: str) -> list[list[float]]:
+        # Cheap deterministic embedding: (index of first char, length).
+        return [[float(ord(t[0])), float(len(t))] for t in texts]
+
+    module = types.ModuleType("pntx.embeddings")
+    module.embed = fake_embed  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pntx.embeddings", module)
+
+
+@pytest.mark.parametrize("sample_method", ["kmeans", "votek"])
+def test_fit_resample_with_embedding_backed_sample_method(
+    monkeypatch: pytest.MonkeyPatch, sample_method: str
+) -> None:
+    _install_fake_embeddings_module(monkeypatch)
+    X, y = _pools()
+    backend = FakeBackend(
+        complete_responses=[_canned([_hp("new hard positive 1"), _hp("new hard positive 2")])]
+    )
+    sampler = OverSampler(
+        backend=backend,
+        n_synthesized=2,
+        batch_size=2,
+        sample_method=sample_method,
+        embedding_model="fake-model",
+    )
+    X_aug, y_aug = sampler.fit_resample(X, y)
+    assert X_aug[: len(X)] == X
+    assert X_aug[len(X) :] == ["new hard positive 1", "new hard positive 2"]
+    assert y_aug == y + [1, 1]
 
 
 def test_backend_kwargs_with_instance_backend_raises() -> None:

@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import random
 from collections.abc import Callable
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+import numpy as np
 
 from . import dedup
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 SimilarityFn = Callable[[str, str], float]
 
@@ -155,3 +160,151 @@ class DiversitySelector:
             selected.append(best_index)
 
         return [pool[i] for i in selected]
+
+
+_SAMPLE_METHODS: tuple[str, ...] = ("random", "kmeans", "votek")
+
+
+def sample_texts_kmeans(
+    texts: list[str], n: int, embeddings: NDArray[np.float64], rng: random.Random | None = None
+) -> list[str]:
+    """Selects up to ``n`` texts by picking the closest text to each K-Means
+    cluster centroid.
+
+    Ported from ``semaxis``'s ``sampling.sample_texts_kmeans``. ``embeddings``
+    is a pre-computed matrix of shape ``(len(texts), dim)``, aligned by index
+    with ``texts``.
+    """
+    from sklearn.cluster import KMeans
+
+    n = min(n, len(texts))
+    if n == 0:
+        return []
+    if n == len(texts):
+        return list(texts)
+
+    seed = rng.randint(0, 2**31 - 1) if rng is not None else None
+    km = KMeans(n_clusters=n, random_state=seed, n_init="auto")
+    km.fit(embeddings)
+
+    selected_indices: list[int] = []
+    for center in km.cluster_centers_:
+        dists = np.linalg.norm(embeddings - center, axis=1)
+        # Exclude already-selected indices to avoid duplicates when clusters share a medoid
+        dists[selected_indices] = np.inf
+        selected_indices.append(int(np.argmin(dists)))
+
+    return [texts[i] for i in selected_indices]
+
+
+def sample_texts_votek(
+    texts: list[str],
+    n: int,
+    embeddings: NDArray[np.float64],
+    k: int = 10,
+    rng: random.Random | None = None,
+) -> list[str]:
+    """Selects up to ``n`` texts using the Vote-K algorithm (Su et al. 2022).
+
+    Ported from ``semaxis``'s ``sampling.sample_texts_votek``. Vote-K balances
+    representativeness (high vote count = many neighbours) and diversity
+    (selected texts' neighbours are suppressed from future picks). ``rng`` is
+    accepted for API symmetry with ``sample_texts_kmeans`` but unused --
+    Vote-K's selection is deterministic given ``embeddings``.
+    """
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    n = min(n, len(texts))
+    if n == 0:
+        return []
+    if n == len(texts):
+        return list(texts)
+
+    k = min(k, len(texts) - 1)
+    sim = cosine_similarity(embeddings)  # (N, N)
+
+    # votes[i] = how many texts consider i among their top-k neighbours
+    votes = np.zeros(len(texts), dtype=float)
+    for i in range(len(texts)):
+        sim_row = sim[i].copy()
+        sim_row[i] = -np.inf  # exclude self
+        top_k = np.argpartition(sim_row, -k)[-k:]
+        votes[top_k] += 1.0
+
+    selected_indices: list[int] = []
+    remaining = np.ones(len(texts), dtype=bool)
+
+    while len(selected_indices) < n and remaining.any():
+        # Among remaining texts, pick the one with the most votes
+        masked_votes = np.where(remaining, votes, -np.inf)
+        best = int(np.argmax(masked_votes))
+        selected_indices.append(best)
+        remaining[best] = False
+
+        # Suppress votes of k nearest neighbours
+        sim_row = sim[best].copy()
+        sim_row[best] = -np.inf
+        top_k = np.argpartition(sim_row, -k)[-k:]
+        votes[top_k] = 0.0
+
+    return [texts[i] for i in selected_indices]
+
+
+def _estimate_n(texts: list[str], token_budget: int, tokenizer_fn: Callable[[str], int]) -> int:
+    """Estimates how many texts fit in ``token_budget`` based on average token length."""
+    if not texts:
+        return 0
+    probe = texts[: min(20, len(texts))]
+    avg = sum(tokenizer_fn(t) for t in probe) / len(probe)
+    return max(1, int(token_budget / avg))
+
+
+def _trim_to_budget(
+    texts: list[str], token_budget: int, tokenizer_fn: Callable[[str], int]
+) -> list[str]:
+    """Trims a list of texts to fit within the token budget, preserving order."""
+    result: list[str] = []
+    total = 0
+    for text in texts:
+        count = tokenizer_fn(text)
+        if total + count > token_budget:
+            break
+        result.append(text)
+        total += count
+    return result
+
+
+def sample_group(
+    texts: list[str],
+    budget: int,
+    tokenizer_fn: Callable[[str], int],
+    method: str,
+    embedding_model: str,
+    rng: random.Random,
+) -> list[str]:
+    """Dispatches to a budget-constrained sampling strategy by name.
+
+    Ported from ``semaxis``'s ``supervised._sample_group``. ``method`` must be
+    one of ``_SAMPLE_METHODS`` (the caller is expected to validate this, as
+    semaxis's own callers do). ``"random"`` delegates to ``BudgetSelector``
+    (no embeddings needed); ``"kmeans"``/``"votek"`` embed ``texts`` via
+    ``pntx.embeddings.embed`` (requires the ``pntx[embeddings]`` extra --
+    imported lazily here so importing this module doesn't require it) and
+    cluster/vote over the resulting vectors, then trim the result back to
+    ``budget`` as a final guarantee (the embedding-based methods only
+    estimate how many texts fit).
+    """
+    if method == "random":
+        return BudgetSelector(
+            tokenizer_fn=tokenizer_fn, token_budget=budget, seed=rng.randint(0, 2**31 - 1)
+        ).select(texts, k=len(texts))
+
+    from . import embeddings
+
+    vectors = np.array(embeddings.embed(texts, embedding_model))
+    n = _estimate_n(texts, budget, tokenizer_fn)
+    if method == "kmeans":
+        sampled = sample_texts_kmeans(texts, n, vectors, rng)
+    else:
+        sampled = sample_texts_votek(texts, n, vectors, rng=rng)
+    return _trim_to_budget(sampled, budget, tokenizer_fn)
