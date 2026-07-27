@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
 class Backend(Protocol):
     """A text-completion backend.
 
-    Every backend (llama.cpp, Anthropic, ...) must implement at least this.
+    Every backend (llama.cpp, ...) must implement at least this.
     """
 
     def complete(
@@ -50,6 +50,37 @@ class BatchScoringBackend(ScoringBackend, Protocol):
     ) -> list[list[float]]:
         """For each query in ``queries``, score ``choices`` as a continuation
         of ``prefix + query``. Returns one score list per query, in order."""
+        ...
+
+
+@runtime_checkable
+class StructuredBackend(Backend, Protocol):
+    """A backend that can constrain generation to match a JSON schema directly
+    (e.g. via llama.cpp's grammar-constrained decoding), instead of relying on
+    prompt instructions plus a parse-and-retry loop.
+
+    Used by ``pn2t._structured.complete_structured``, which prefers this over
+    plain ``complete()`` + text parsing whenever the backend implements it.
+    Backends without it (e.g. remote chat APIs with no grammar/schema
+    support) fall back to the prompt-and-parse path unchanged.
+    """
+
+    def complete_json(
+        self,
+        prompt: str,
+        *,
+        schema: dict[str, Any],
+        temperature: float = 1.0,
+        max_tokens: int = 512,
+    ) -> str:
+        """Complete ``prompt``, constraining generation to syntactically valid
+        JSON matching ``schema`` (a JSON Schema dict, typically from
+        ``pydantic.BaseModel.model_json_schema()``).
+
+        Guarantees JSON-syntax validity, not full schema conformance (e.g.
+        numeric ranges or enum membership) -- callers should still validate
+        the result (e.g. via ``pydantic.BaseModel.model_validate_json()``).
+        """
         ...
 
 

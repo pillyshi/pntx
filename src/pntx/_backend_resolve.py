@@ -7,7 +7,6 @@ from .backends.base import Backend
 
 _BACKEND_REGISTRY: dict[str, tuple[str, str]] = {
     "llama": ("pntx.backends.llama", "LlamaCppBackend"),
-    "anthropic": ("pntx.backends.anthropic", "AnthropicBackend"),
 }
 
 

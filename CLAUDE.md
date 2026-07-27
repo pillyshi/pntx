@@ -12,7 +12,7 @@
 重要な前提:
 - **正例/負例の意味論はユーザが定義する。** 感情ポジネガに限らず任意の対比軸(フォーマル/カジュアル、規約準拠/違反 など)を扱う。ライブラリはプールの意味を解釈せず、与えられたテキストをそのまま few-shot 素材・スコアリング素材として使う。
 - **入力は scikit-learn / imbalanced-learn の `(X, y)` 規約に合わせる。** `X: list[str]`(生テキスト)、`y`(0/1 または `"positive"`/`"negative"` などの2値ラベル)。ペアリングを強制しない点は従来通り(`y` でグルーピングした結果、positive/negative それぞれの件数が揃う必要はない)。**ただし `t2pn.Classifier.fit` / `pn2t.OverSampler.fit_resample` はどちらも両クラスが最低1件ずつ存在することを要求する**(旧仕様にあった「片側のプールだけで fit」というスモークテスト用途は、sklearn/imblearn の分類データセット規約を採用したことに伴い廃止)。
-- **llama.cpp インプロセス実行が主戦場。** LLM API(Anthropic 等)は副次的バックエンド。設計判断で迷ったら llama.cpp での性能・体験を優先する。`t2pn`・`pn2t` とも、LLM 呼び出しは共通の `Backend` 抽象を経由し、同じロード済みモデル(例: 同一の `LlamaCppBackend` インスタンス)を共有できるようにする。**それぞれが独自の LLM クライアントを持って別々にモデルをロードする実装は禁止**(ローカル推論のメモリ/VRAM を二重に食うため)。
+- **llama.cpp インプロセス実行が主戦場。** 現在ビルトインで提供するバックエンドは `LlamaCppBackend` のみ(`AnthropicBackend` は一旦廃止 — 経緯は後述)。設計判断で迷ったら llama.cpp での性能・体験を優先する。`t2pn`・`pn2t` とも、LLM 呼び出しは共通の `Backend` 抽象を経由し、同じロード済みモデル(例: 同一の `LlamaCppBackend` インスタンス)を共有できるようにする。**それぞれが独自の LLM クライアントを持って別々にモデルをロードする実装は禁止**(ローカル推論のメモリ/VRAM を二重に食うため)。リモートAPIバックエンドを将来また追加する場合も、`Backend` プロトコルを実装するだけで足りる設計(`_backend_resolve.py` のレジストリに1行足すだけ)は維持すること。
 - **`pn2t` には目的の異なる2つの Sampler がある。** `OverSampler`(分類器学習データ拡張、hard positive)と `SyntheticSampler`(匿名化された代表的合成データ、データ公開用途)。どちらも positive 側のみ生成、二値ラベル `{0, 1}` のみサポートという制約は共通。negative 側生成、3値以上への一般化は引き続きスコープ外(後述)。
 
 ## 公開 API(この形を維持すること)
@@ -22,7 +22,7 @@ from pntx.t2pn import Classifier
 from pntx.pn2t import OverSampler
 
 # --- t2pn: 分類 (scikit-learn Classifier) ---
-clf = Classifier(backend=...)   # Backend インスタンス、または "llama" / "anthropic" 等の文字列
+clf = Classifier(backend=...)   # Backend インスタンス、または "llama" 等のビルトインバックエンド名の文字列
 
 X = ["この映画は最高だった", "サポートが丁寧で助かった", "この映画は退屈だった", "サポートの対応が雑だった"]
 y = ["positive", "positive", "negative", "negative"]   # 0/1 でも可
@@ -70,8 +70,8 @@ class ScoringBackend(Backend, Protocol):
 ```
 
 - **LlamaCppBackend**(`llama-cpp-python` 使用): `ScoringBackend` を実装。`score_choices` は各 choice のトークン logprob 合計で実装する。共通 prefix の KV キャッシュ再利用を必ず行うこと。
-- **AnthropicBackend**: `Backend` のみ実装(テキスト生成をパースして分類/構造化出力)。
-- **構造化出力(pn2t が必要とする JSON スキーマ付き生成)は `Backend` プロトコルに新しいメソッドを追加しない。** `pntx/pn2t/` 側で `Backend.complete()` の上に薄いレイヤーを実装する: JSON 出力を促すプロンプト → `pydantic.BaseModel.model_validate_json()` でパース → `ValidationError` 時は限られた回数までリトライ。こうすることで Backend 抽象を変更せずに済み、`t2pn` と `pn2t` が同じ Backend 実装・同じロード済みモデルを共有できる。
+- **AnthropicBackend は一旦廃止。** 以前は `Backend` のみ実装(テキスト生成をパースして分類/構造化出力)する副次的バックエンドとして存在したが、現時点ではビルトインのバックエンドは `LlamaCppBackend` のみ。復活させる場合も `Backend` プロトコルだけ実装すればよい設計(下記)は変えないこと。
+- **構造化出力(pn2t が必要とする JSON スキーマ付き生成)は、対応バックエンドでは llama.cpp のグラマー制約デコーディングを使う。** `Backend` の必須メソッドは変えず、任意実装の `StructuredBackend`(`pntx/backends/base.py`、`complete_json(prompt, *, schema, temperature, max_tokens) -> str`)を追加。`LlamaCppBackend` はこれを実装し、`llama_cpp.LlamaGrammar.from_json_schema()` で pydantic の `model_json_schema()` から生成した GBNF grammar を `create_completion` に渡すことで、構文的に妥当なJSONを保証する(pydanticレベルの制約 — enum・数値レンジ等 — までは保証しないため、`model_validate_json()` によるバリデーションは引き続き必須)。`pntx/pn2t/_structured.py` の `complete_structured` は `isinstance(backend, StructuredBackend)` で分岐し、対応していれば `complete_json` を、対応していない(将来のリモートAPI系などの)バックエンドは従来通り「JSON出力を促すプロンプト → `complete()` → パース → 限られた回数までリトライ」にフォールバックする。この二段構えにより `Backend` 抽象そのものは変わらず、`t2pn` と `pn2t` は引き続き同じ Backend 実装・同じロード済みモデルを共有できる。
 
 ### `t2pn.Classifier`(`pntx/t2pn.py`)
 
@@ -110,10 +110,10 @@ class ScoringBackend(Backend, Protocol):
 ## パッケージング
 
 - **コア依存として `scikit-learn` と `pydantic` を必須にする**(`t2pn.Classifier` の Estimator 契約、`pn2t.OverSampler` の構造化出力検証にそれぞれ必須のため)。「本体はゼロ依存」という従来方針は撤回し、ゼロ依存の対象はバックエンド実装(LLM SDK)と埋め込み系に限定する。
-- optional dependencies(変更なし):
+- optional dependencies:
   - `pntx[llama]` → `llama-cpp-python`
-  - `pntx[anthropic]` → `anthropic`
   - `pntx[embeddings]` → 埋め込みベースの dedup / DiversitySelector 用
+  - (`pntx[anthropic]` → `anthropic` は `AnthropicBackend` の廃止に伴い削除。復活時は `_BACKEND_REGISTRY` にエントリを1行足すのと合わせて追加する)
 - 未インストールのバックエンドを使おうとしたら、インストールコマンドを含む明確な ImportError を出す。
 - `pyproject.toml`(`uv_build`)、Python 3.10+。
 

@@ -6,7 +6,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from ..backends.base import Backend
+from ..backends.base import Backend, StructuredBackend
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -27,21 +27,30 @@ def complete_structured(
 
     Builds one flat prompt (``system`` + ``user``, matching the rest of
     pntx's prompt-building convention of plain strings rather than chat
-    messages) and asks the backend to complete it, then parses the result as
-    ``response_model``. Retries once (with a fresh completion) on invalid
-    JSON or a schema mismatch; raises the underlying ``ValidationError``/
-    ``JSONDecodeError`` if the second attempt also fails, letting the
-    caller's own retry loop (a fresh batch, different exemplars) take over.
-
-    Unlike semaxis's ``LlamaCppClient.complete_structured`` (which uses
-    llama.cpp's grammar-constrained JSON decoding), this works over any
-    ``Backend`` via plain-text completion + validation, since ``pntx``'s
-    ``Backend`` protocol intentionally has no structured-output method.
+    messages). If ``backend`` implements ``StructuredBackend``, generation is
+    grammar-constrained to ``response_model``'s JSON schema (e.g. via
+    llama.cpp), which guarantees syntactically valid JSON; otherwise falls
+    back to plain-text completion relying on prompt instructions alone.
+    Either way the result is parsed as ``response_model`` and validated,
+    since grammar constraints only guarantee JSON syntax, not full schema
+    conformance (numeric ranges, enums, ...). Retries once (with a fresh
+    completion) on invalid JSON or a schema mismatch; raises the underlying
+    ``ValidationError``/``JSONDecodeError`` if the second attempt also fails,
+    letting the caller's own retry loop (a fresh batch, different exemplars)
+    take over.
     """
     prompt = f"{system}\n\n{user}\n\nJSON:\n"
     last_error: Exception | None = None
     for _attempt in range(_MAX_ATTEMPTS):
-        raw = backend.complete(prompt, temperature=temperature, max_tokens=max_tokens)
+        if isinstance(backend, StructuredBackend):
+            raw = backend.complete_json(
+                prompt,
+                schema=response_model.model_json_schema(),
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        else:
+            raw = backend.complete(prompt, temperature=temperature, max_tokens=max_tokens)
         try:
             return response_model.model_validate_json(_extract_json(raw))
         except (ValidationError, json.JSONDecodeError) as e:

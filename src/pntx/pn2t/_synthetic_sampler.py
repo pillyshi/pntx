@@ -31,7 +31,7 @@ class _Logger(Protocol):
 
 def _default_tokenizer(text: str) -> int:
     """Rough token-count fallback for backends without ``count_tokens``
-    (e.g. ``LlamaCppBackend`` has one; ``AnthropicBackend`` doesn't)."""
+    (e.g. ``LlamaCppBackend`` has one; other backends may not)."""
     return len(text) // _DEFAULT_CHARS_PER_TOKEN + 1
 
 

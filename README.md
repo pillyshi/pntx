@@ -81,7 +81,6 @@ copy-through leaks but not paraphrased ones, so it's not a privacy guarantee.
 ```bash
 uv add pntx               # core (scikit-learn + pydantic)
 uv add "pntx[llama]"      # + llama.cpp in-process backend
-uv add "pntx[anthropic]"  # + Anthropic API backend
 uv add "pntx[embeddings]" # + semantic similarity for selectors
 ```
 
@@ -92,27 +91,26 @@ it raises a clear `ImportError` with the install command to run.
 
 ## Backends
 
-`pntx` runs models two ways, shared by `Classifier`, `OverSampler`, and `SyntheticSampler`:
+`pntx` runs models via a `Backend` protocol, shared by `Classifier`, `OverSampler`, and
+`SyntheticSampler`:
 
 - **`LlamaCppBackend`** (`pntx[llama]`) — runs a GGUF model in-process via
   `llama-cpp-python`. This is the primary, most-tuned backend: classification uses
   token log-probabilities directly (`score_choices`), and batched classification
   reuses the shared few-shot prefix's KV cache across every item instead of
   re-evaluating it per item.
-- **`AnthropicBackend`** (`pntx[anthropic]`) — calls the Anthropic Messages API.
-  Since that API doesn't expose log-probabilities, classification asks the model to
-  name the label and parses it out of the response instead (confidence is then a
-  fixed convention value, not a calibrated probability). Batched classification runs
-  requests concurrently (`asyncio` + a semaphore), not in a sequential loop.
 
 ```python
 clf = Classifier(backend="llama", backend_kwargs={"model_path": "model.gguf"})
-clf = Classifier(backend="anthropic", backend_kwargs={"model": "claude-..."})
 
 # or pass a backend instance directly, e.g. for dependency injection in tests
 from pntx.backends.llama import LlamaCppBackend
 clf = Classifier(backend=LlamaCppBackend(model_path="model.gguf"))
 ```
+
+A remote API backend can be added later by implementing the `Backend` protocol
+(`pntx.backends.base.Backend`) and passing an instance directly — no built-in one
+ships right now.
 
 `backend_kwargs` is only used when `backend` is given as a string; it's a single dict
 (rather than `**kwargs`) so `Classifier`/`OverSampler`/`SyntheticSampler` stay compatible
@@ -208,5 +206,4 @@ Integration tests that hit a real model or API are opt-in:
 
 ```bash
 PNTX_LLAMA_MODEL_PATH=/path/to/model.gguf uv run pytest tests/integration
-ANTHROPIC_API_KEY=... uv run pytest tests/integration/test_anthropic_backend.py
 ```

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import warnings
 from typing import Any
 
@@ -15,7 +16,11 @@ except ImportError as e:
 class LlamaCppBackend:
     """In-process backend backed by llama.cpp (via ``llama-cpp-python``).
 
-    Implements ``Backend``, ``ScoringBackend`` and ``BatchScoringBackend``.
+    Implements ``Backend``, ``ScoringBackend``, ``BatchScoringBackend`` and
+    ``StructuredBackend`` (``complete_json``, used by ``pn2t``'s structured
+    output layer to grammar-constrain generation to valid JSON instead of
+    prompting-and-parsing free text).
+
     Scoring methods reuse the KV cache of whatever prefix they share: rather
     than re-evaluating a shared prefix for every downstream token span, they
     eval it once and then, for each span, rewind ``n_tokens`` back to the
@@ -72,6 +77,39 @@ class LlamaCppBackend:
         max_tokens: int = 512,
         stop: list[str] | None = None,
     ) -> str:
+        return self._complete(prompt, temperature=temperature, max_tokens=max_tokens, stop=stop)
+
+    def complete_json(
+        self,
+        prompt: str,
+        *,
+        schema: dict[str, Any],
+        temperature: float = 1.0,
+        max_tokens: int = 512,
+    ) -> str:
+        """Implements ``StructuredBackend``: constrain decoding to ``schema``
+        via llama.cpp's grammar-constrained sampling (a GBNF grammar derived
+        from the JSON schema, so every sampled token is masked down to ones
+        that keep the output on a path to valid JSON matching ``schema``).
+
+        This guarantees JSON-syntax validity but not full schema conformance
+        (e.g. numeric ranges/enums) -- ``pn2t._structured.complete_structured``
+        still validates the result with pydantic on top of this.
+        """
+        grammar = llama_cpp.LlamaGrammar.from_json_schema(json.dumps(schema), verbose=False)
+        return self._complete(
+            prompt, temperature=temperature, max_tokens=max_tokens, grammar=grammar
+        )
+
+    def _complete(
+        self,
+        prompt: str,
+        *,
+        temperature: float,
+        max_tokens: int,
+        stop: list[str] | None = None,
+        grammar: Any = None,
+    ) -> str:
         prompt_tokens = self._fit_to_context(
             self._tokenize(prompt, add_bos=True), reserve=max_tokens
         )
@@ -80,6 +118,7 @@ class LlamaCppBackend:
             temperature=temperature,
             max_tokens=max_tokens,
             stop=stop or [],
+            grammar=grammar,
         )
         if not isinstance(result, dict):
             raise TypeError(f"expected a non-streaming completion response, got {type(result)}")

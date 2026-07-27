@@ -146,8 +146,7 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
             )
         else:
             # No concurrent-batch path for this backend; complete one prompt
-            # at a time. (AnthropicBackend implements BatchBackend and takes
-            # the branch above.)
+            # at a time. (A BatchBackend implementation takes the branch above.)
             raw_completions = [
                 self.backend_.complete(
                     prompt, temperature=0.0, max_tokens=prompts.CLASSIFY_COMPLETION_MAX_TOKENS

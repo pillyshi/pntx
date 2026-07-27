@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -110,6 +111,44 @@ def test_max_choice_tokens_returns_longest_choice_length() -> None:
 def test_max_choice_tokens_empty_choices_is_zero() -> None:
     backend = LlamaCppBackend(model_path="model.gguf")
     assert backend._max_choice_tokens([]) == 0
+
+
+class _FakeGrammar:
+    def __init__(self, schema_json: str) -> None:
+        self.schema_json = schema_json
+
+
+def test_complete_json_constrains_decoding_with_grammar_from_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+    backend._llm.n_ctx = lambda: 4096  # type: ignore[method-assign]
+    backend._llm.tokenize = (  # type: ignore[method-assign]
+        lambda text, add_bos=True, special=False: [1, 2, 3]
+    )
+
+    monkeypatch.setattr(
+        llama_cpp,
+        "LlamaGrammar",
+        type("_LlamaGrammar", (), {"from_json_schema": staticmethod(_FakeGrammar)}),
+    )
+
+    create_completion_calls: list[dict[str, Any]] = []
+
+    def _create_completion(prompt_tokens: list[int], **kwargs: Any) -> dict[str, Any]:
+        create_completion_calls.append(kwargs)
+        return {"choices": [{"text": '{"x": 1}'}]}
+
+    backend._llm.create_completion = _create_completion  # type: ignore[method-assign]
+
+    schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
+    result = backend.complete_json("prompt", schema=schema, max_tokens=64)
+
+    assert result == '{"x": 1}'
+    grammar = create_completion_calls[0]["grammar"]
+    assert isinstance(grammar, _FakeGrammar)
+    assert grammar.schema_json == json.dumps(schema)
+    assert create_completion_calls[0]["max_tokens"] == 64
 
 
 def test_count_tokens_returns_token_count_without_bos() -> None:

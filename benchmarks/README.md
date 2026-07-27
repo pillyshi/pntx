@@ -28,7 +28,7 @@ uv sync --extra llama --group benchmark
 
 Fits `PNTX` on sampled Jigsaw pairs, runs `classify_batch` over a balanced
 held-out eval set, and reports accuracy/precision/recall/F1 plus latency.
-llama.cpp only (no Anthropic backend, to avoid API costs). Not run in CI --
+llama.cpp only (the only backend `pntx` currently ships). Not run in CI --
 it downloads the full dataset and needs a local gguf model, so run it
 manually, e.g. on a GPU server:
 

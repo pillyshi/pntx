@@ -57,9 +57,9 @@ CLASSIFY_COMPLETION_MAX_TOKENS = 8
 def parse_classify_label(raw: str) -> tuple[Label, float]:
     """Parse a freeform completion of ``build_classify_prompt`` into a label.
 
-    Used for backends without ``score_choices`` (e.g. ``AnthropicBackend``):
-    rather than comparing log-likelihoods, we ask the model to name the
-    label and look for it in the response text.
+    Used for backends without ``score_choices`` (e.g. a remote chat API
+    backend): rather than comparing log-likelihoods, we ask the model to
+    name the label and look for it in the response text.
 
     Confidence here is *not* a calibrated probability, just a fixed
     convention value: ``1.0`` when exactly one label word was found, ``0.5``

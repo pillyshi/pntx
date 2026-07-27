@@ -56,6 +56,32 @@ class FakeBatchBackend(FakeBackend):
         return [self.batch_scores.get((prefix, query), [0.0 for _ in choices]) for query in queries]
 
 
+class FakeStructuredBackend(FakeBackend):
+    """A FakeBackend that also implements StructuredBackend."""
+
+    def __init__(
+        self,
+        choice_scores: dict[str, list[float]] | None = None,
+        json_responses: list[str] | None = None,
+    ) -> None:
+        super().__init__(choice_scores)
+        self._json_responses = list(json_responses or [])
+        self.complete_json_calls: list[tuple[str, dict[str, object]]] = []
+
+    def complete_json(
+        self,
+        prompt: str,
+        *,
+        schema: dict[str, object],
+        temperature: float = 1.0,
+        max_tokens: int = 512,
+    ) -> str:
+        self.complete_json_calls.append((prompt, schema))
+        if self._json_responses:
+            return self._json_responses.pop(0)
+        return ""
+
+
 class CompleteOnlyBackend:
     """A Backend that does *not* implement ScoringBackend."""
 

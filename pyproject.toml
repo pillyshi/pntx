@@ -1,6 +1,6 @@
 [project]
 name = "pntx"
-version = "0.7.0"
+version = "0.8.0"
 description = "Generate and classify text from user-defined positive/negative example pools"
 readme = "README.md"
 license = "MIT"
@@ -42,9 +42,6 @@ Issues = "https://github.com/pillyshi/pntx/issues"
 [project.optional-dependencies]
 llama = [
     "llama-cpp-python",
-]
-anthropic = [
-    "anthropic",
 ]
 embeddings = [
     "sentence-transformers",
