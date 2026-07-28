@@ -11,6 +11,13 @@ except ImportError as e:
         "LlamaCppBackend requires the 'llama' extra. Install it with: pip install 'pntx[llama]'"
     ) from e
 
+# Rough, model-agnostic allowance for the tokens a chat template adds on top
+# of message content (role markers, turn boundaries, the trailing
+# generation prompt, ...); we can't size this exactly without rendering the
+# model's actual template, so it's a conservative fixed margin rather than a
+# precise count.
+_CHAT_TEMPLATE_OVERHEAD = 64
+
 
 class LlamaCppBackend:
     """In-process backend backed by llama.cpp (via ``llama-cpp-python``).
@@ -25,16 +32,34 @@ class LlamaCppBackend:
     eval it once and then, for each span, rewind ``n_tokens`` back to the
     prefix boundary before eval'ing that span's tokens (``Llama.eval()``
     trims the KV cache down to the current ``n_tokens`` before appending, so
-    this discards only the previous span, not the shared prefix).
+    this discards only the previous span, not the shared prefix). They call
+    ``Llama.eval()`` directly rather than going through chat/completion
+    endpoints, since choice-scoring needs raw prefix continuation -- a chat
+    template would insert its own tokens between prefix and choice and break
+    that.
+
+    ``complete``/``complete_json`` route through ``create_chat_completion``
+    instead (a single ``user``-role message wrapping the whole prompt),
+    rather than treating the prompt as raw text to continue. This applies
+    the model's own chat template (turn-boundary tokens the model was
+    instruction-tuned against), which matters a lot for reliably stopping at
+    the right place -- without it, generation is more prone to degenerating
+    into repeating the same token instead of naturally converging, which
+    grammar-constrained decoding (every token syntactically valid, nothing
+    telling the model when to stop *early*) makes easier to fall into.
 
     Every entry point also guards against prompts that don't fit in
-    ``n_ctx``: rather than letting llama.cpp raise once eval is attempted,
-    tokens are trimmed from the *front* of the prompt (warning when this
-    happens) down to a budget that still leaves room for the response
-    (``max_tokens``) or the scored choices. The front is what's dropped
-    because prompts here are built exemplars-first, query/instruction-last
-    (see ``prompts.py``), so trimming the front sheds the oldest few-shot
+    ``n_ctx``, warning and trimming from the *front* when they don't --
+    prompts here are built exemplars-first, query/instruction-last (see
+    ``prompts.py``), so trimming the front sheds the oldest few-shot
     material while preserving the part that's actually being asked about.
+    ``score_choices``/``score_choices_batch`` trim precisely (token IDs,
+    never round-tripped through text). ``complete``/``complete_json`` can
+    only trim approximately: ``create_chat_completion`` takes message text,
+    not pre-tokenized input, so trimming happens on a text reconstructed
+    from tokenizing-then-detokenizing the prompt, and the budget reserves
+    ``_CHAT_TEMPLATE_OVERHEAD`` extra tokens for the template's own markers
+    since their exact count isn't known without rendering the template.
     """
 
     def __init__(
@@ -43,6 +68,7 @@ class LlamaCppBackend:
         *,
         repo_id: str | None = None,
         filename: str | None = None,
+        repeat_penalty: float = 1.1,
         **kwargs: Any,
     ) -> None:
         """Load a GGUF model, either from a local path or the Hugging Face Hub.
@@ -52,11 +78,20 @@ class LlamaCppBackend:
         model is resolved through ``Llama.from_pretrained`` (downloaded and
         cached under the standard Hugging Face Hub cache).
 
+        ``repeat_penalty`` is applied to every ``complete``/``complete_json``
+        call (matching llama.cpp's own CLI/server default of 1.1, rather than
+        ``llama-cpp-python``'s ``create_completion`` default of 1.0, i.e. no
+        penalty at all). Without it, generation -- especially inside a
+        grammar-constrained JSON string, where "any character" stays a valid
+        continuation indefinitely -- can collapse into repeating the same
+        token until ``max_tokens`` cuts it off instead of naturally closing.
+
         Remaining ``kwargs`` (e.g. ``n_ctx``, ``n_gpu_layers``, ``flash_attn``)
         are forwarded as-is to ``llama_cpp.Llama``.
         """
         if (model_path is None) == (repo_id is None):
             raise ValueError("exactly one of model_path or repo_id must be given")
+        self._repeat_penalty = repeat_penalty
         # Scoring needs per-token logits, which llama.cpp only keeps around
         # when logits_all=True.
         kwargs["logits_all"] = True
@@ -111,19 +146,20 @@ class LlamaCppBackend:
         stop: list[str] | None = None,
         grammar: Any = None,
     ) -> str:
-        prompt_tokens = self._fit_to_context(
-            self._tokenize(prompt, add_bos=True), reserve=max_tokens
-        )
-        result = self._llm.create_completion(
-            prompt_tokens,
+        prompt = self._fit_prompt_to_context(prompt, reserve=max_tokens)
+        result = self._llm.create_chat_completion(
+            messages=[{"role": "user", "content": prompt}],
             temperature=temperature,
             max_tokens=max_tokens,
             stop=stop or [],
             grammar=grammar,
+            repeat_penalty=self._repeat_penalty,
         )
         if not isinstance(result, dict):
-            raise TypeError(f"expected a non-streaming completion response, got {type(result)}")
-        return result["choices"][0]["text"]
+            raise TypeError(
+                f"expected a non-streaming chat completion response, got {type(result)}"
+            )
+        return result["choices"][0]["message"]["content"] or ""
 
     def score_choices(self, prompt: str, choices: list[str]) -> list[float]:
         """Return the summed log-likelihood of each choice as a continuation of ``prompt``."""
@@ -217,6 +253,42 @@ class LlamaCppBackend:
         # keep it and drop from just after it, rather than dropping BOS
         # itself along with the oldest exemplars.
         return tokens[:1] + tokens[-(budget - 1) :]
+
+    def _fit_prompt_to_context(self, prompt: str, *, reserve: int) -> str:
+        """Trim ``prompt`` (dropping from the front) so it fits in ``n_ctx``
+        as chat-message content, warning when a trim actually happens.
+
+        Unlike ``_fit_to_context``, this can't work on exact pre-tokenized
+        input: ``create_chat_completion`` renders ``messages`` through the
+        model's chat template itself, so the tokens actually sent depend on
+        that template, not just ``prompt``. This tokenizes ``prompt`` (no
+        BOS -- the template adds its own) to measure and, if needed, trim
+        it, then detokenizes back to text; the budget reserves
+        ``_CHAT_TEMPLATE_OVERHEAD`` on top of ``reserve`` (``max_tokens``)
+        as a margin for the template's own added tokens.
+        """
+        n_ctx = self._llm.n_ctx()
+        budget = n_ctx - reserve - _CHAT_TEMPLATE_OVERHEAD
+        if budget <= 0:
+            raise ValueError(
+                f"reserve ({reserve} tokens) alone leaves no room in the context "
+                f"window ({n_ctx} tokens) after reserving {_CHAT_TEMPLATE_OVERHEAD} tokens "
+                "for the chat template; reduce max_tokens or increase n_ctx"
+            )
+        tokens = self._tokenize(prompt, add_bos=False)
+        if len(tokens) <= budget:
+            return prompt
+        warnings.warn(
+            f"prompt ({len(tokens)} tokens) exceeds the available context budget "
+            f"({budget} of {n_ctx} tokens, after reserving {reserve} for the response "
+            f"and {_CHAT_TEMPLATE_OVERHEAD} for the chat template); dropping the oldest "
+            "exemplars to fit. Pass t2pn.Classifier(max_exemplars=...) to select fewer "
+            "exemplars deliberately instead of relying on this truncation.",
+            UserWarning,
+            stacklevel=3,
+        )
+        trimmed = tokens[-budget:] if budget else []
+        return self._llm.detokenize(trimmed).decode("utf-8", errors="ignore")
 
     def _reset(self) -> None:
         self._llm.reset()  # type: ignore[no-untyped-call]  # llama_cpp.Llama.reset() has no annotations

@@ -111,6 +111,117 @@ def test_max_choice_tokens_empty_choices_is_zero() -> None:
     assert backend._max_choice_tokens([]) == 0
 
 
+def test_complete_routes_through_chat_completion_as_a_single_user_message() -> None:
+    """``complete``/``complete_json`` go through ``create_chat_completion``
+    (not ``create_completion``) so the model's own chat template applies --
+    without it, generation is more prone to never converging to a stop (see
+    the repeat_penalty test below for the concrete failure mode this feeds
+    into).
+    """
+    backend = LlamaCppBackend(model_path="model.gguf")
+    backend._llm.n_ctx = lambda: 4096  # type: ignore[method-assign]
+    backend._llm.tokenize = (  # type: ignore[method-assign]
+        lambda text, add_bos=True, special=False: [1, 2, 3]
+    )
+    calls: list[dict[str, Any]] = []
+
+    def _create_chat_completion(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    backend._llm.create_chat_completion = _create_chat_completion  # type: ignore[method-assign]
+
+    result = backend.complete("prompt", max_tokens=64)
+
+    assert result == "ok"
+    assert calls[0]["messages"] == [{"role": "user", "content": "prompt"}]
+
+
+def test_complete_applies_default_repeat_penalty() -> None:
+    """``create_chat_completion``'s own default (``repeat_penalty=1.0``, i.e.
+    no penalty) lets grammar-constrained generation collapse into repeating
+    the same character forever instead of closing -- e.g. a JSON string that
+    never finds its closing quote and runs to ``max_tokens``. Regression
+    test for defaulting to llama.cpp's own CLI/server default (1.1) instead.
+    """
+    backend = LlamaCppBackend(model_path="model.gguf")
+    backend._llm.n_ctx = lambda: 4096  # type: ignore[method-assign]
+    backend._llm.tokenize = (  # type: ignore[method-assign]
+        lambda text, add_bos=True, special=False: [1, 2, 3]
+    )
+    calls: list[dict[str, Any]] = []
+
+    def _create_chat_completion(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    backend._llm.create_chat_completion = _create_chat_completion  # type: ignore[method-assign]
+
+    backend.complete("prompt", max_tokens=64)
+
+    assert calls[0]["repeat_penalty"] == 1.1
+
+
+def test_complete_uses_custom_repeat_penalty() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf", repeat_penalty=1.3)
+    backend._llm.n_ctx = lambda: 4096  # type: ignore[method-assign]
+    backend._llm.tokenize = (  # type: ignore[method-assign]
+        lambda text, add_bos=True, special=False: [1, 2, 3]
+    )
+    calls: list[dict[str, Any]] = []
+
+    def _create_chat_completion(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    backend._llm.create_chat_completion = _create_chat_completion  # type: ignore[method-assign]
+
+    backend.complete("prompt", max_tokens=64)
+
+    assert calls[0]["repeat_penalty"] == 1.3
+
+
+def test_repeat_penalty_not_forwarded_to_llama_constructor() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf", repeat_penalty=1.3)
+    assert "repeat_penalty" not in backend._llm.init_kwargs  # type: ignore[attr-defined]
+
+
+def test_fit_prompt_to_context_returns_prompt_unchanged_when_it_fits() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+    backend._llm.n_ctx = lambda: 200  # type: ignore[method-assign]
+    backend._llm.tokenize = (  # type: ignore[method-assign]
+        lambda text, add_bos=True, special=False: list(text)
+    )
+
+    assert backend._fit_prompt_to_context("short prompt", reserve=10) == "short prompt"
+
+
+def test_fit_prompt_to_context_trims_from_front_and_detokenizes() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+    # budget = n_ctx(100) - reserve(10) - _CHAT_TEMPLATE_OVERHEAD(64) = 26
+    backend._llm.n_ctx = lambda: 100  # type: ignore[method-assign]
+    backend._llm.tokenize = (  # type: ignore[method-assign]
+        lambda text, add_bos=True, special=False: list(text)
+    )
+    backend._llm.detokenize = (  # type: ignore[method-assign]
+        lambda tokens, prev_tokens=None, special=False: bytes(tokens)
+    )
+
+    prompt = "x" * 30
+    with pytest.warns(UserWarning, match="exceeds the available context budget"):
+        trimmed = backend._fit_prompt_to_context(prompt, reserve=10)
+
+    assert trimmed == "x" * 26
+
+
+def test_fit_prompt_to_context_raises_when_reserve_and_overhead_exceed_context() -> None:
+    backend = LlamaCppBackend(model_path="model.gguf")
+    backend._llm.n_ctx = lambda: 50  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="leaves no room"):
+        backend._fit_prompt_to_context("prompt", reserve=10)
+
+
 class _FakeGrammar:
     def __init__(self, schema_json: str, verbose: bool = True) -> None:
         self.schema_json = schema_json
@@ -131,22 +242,22 @@ def test_complete_json_constrains_decoding_with_grammar_from_schema(
         type("_LlamaGrammar", (), {"from_json_schema": staticmethod(_FakeGrammar)}),
     )
 
-    create_completion_calls: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
 
-    def _create_completion(prompt_tokens: list[int], **kwargs: Any) -> dict[str, Any]:
-        create_completion_calls.append(kwargs)
-        return {"choices": [{"text": '{"x": 1}'}]}
+    def _create_chat_completion(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": '{"x": 1}'}}]}
 
-    backend._llm.create_completion = _create_completion  # type: ignore[method-assign]
+    backend._llm.create_chat_completion = _create_chat_completion  # type: ignore[method-assign]
 
     schema = {"type": "object", "properties": {"x": {"type": "integer"}}}
     result = backend.complete_json("prompt", schema=schema, max_tokens=64)
 
     assert result == '{"x": 1}'
-    grammar = create_completion_calls[0]["grammar"]
+    grammar = calls[0]["grammar"]
     assert isinstance(grammar, _FakeGrammar)
     assert grammar.schema_json == json.dumps(schema)
-    assert create_completion_calls[0]["max_tokens"] == 64
+    assert calls[0]["max_tokens"] == 64
 
 
 def test_complete_json_inlines_refs_before_building_grammar(
@@ -172,13 +283,13 @@ def test_complete_json_inlines_refs_before_building_grammar(
         "LlamaGrammar",
         type("_LlamaGrammar", (), {"from_json_schema": staticmethod(_FakeGrammar)}),
     )
-    create_completion_calls: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
 
-    def _create_completion(prompt_tokens: list[int], **kwargs: Any) -> dict[str, Any]:
-        create_completion_calls.append(kwargs)
-        return {"choices": [{"text": "{}"}]}
+    def _create_chat_completion(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "{}"}}]}
 
-    backend._llm.create_completion = _create_completion  # type: ignore[method-assign]
+    backend._llm.create_chat_completion = _create_chat_completion  # type: ignore[method-assign]
 
     schema = {
         "$defs": {
@@ -194,7 +305,7 @@ def test_complete_json_inlines_refs_before_building_grammar(
     }
     backend.complete_json("prompt", schema=schema, max_tokens=64)
 
-    grammar = create_completion_calls[0]["grammar"]
+    grammar = calls[0]["grammar"]
     assert isinstance(grammar, _FakeGrammar)
     resolved_schema = json.loads(grammar.schema_json)
     assert "$defs" not in resolved_schema

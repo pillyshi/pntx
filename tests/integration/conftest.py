@@ -22,4 +22,4 @@ def llama_backend() -> Iterator[LlamaCppBackend]:
 
     from pntx.backends.llama import LlamaCppBackend as _LlamaCppBackend
 
-    yield _LlamaCppBackend(model_path=model_path, n_ctx=512, verbose=False)
+    yield _LlamaCppBackend(model_path=model_path, n_ctx=4096, verbose=False)
