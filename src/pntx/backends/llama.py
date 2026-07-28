@@ -8,8 +8,7 @@ try:
     import llama_cpp
 except ImportError as e:
     raise ImportError(
-        "LlamaCppBackend requires the 'llama' extra. "
-        "Install it with: pip install 'pntx[llama]'"
+        "LlamaCppBackend requires the 'llama' extra. Install it with: pip install 'pntx[llama]'"
     ) from e
 
 
@@ -96,7 +95,9 @@ class LlamaCppBackend:
         (e.g. numeric ranges/enums) -- ``pn2t._structured.complete_structured``
         still validates the result with pydantic on top of this.
         """
-        grammar = llama_cpp.LlamaGrammar.from_json_schema(json.dumps(schema), verbose=False)
+        grammar = llama_cpp.LlamaGrammar.from_json_schema(
+            json.dumps(_inline_refs(schema)), verbose=False
+        )
         return self._complete(
             prompt, temperature=temperature, max_tokens=max_tokens, grammar=grammar
         )
@@ -239,3 +240,33 @@ class LlamaCppBackend:
         logits = self._llm.scores[base_n_tokens - 1 : base_n_tokens + len(tokens) - 1]
         logprobs = self._llm.logits_to_logprobs(logits)
         return float(sum(logprobs[j, tok] for j, tok in enumerate(tokens)))
+
+
+def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Recursively resolve ``$ref`` pointers against ``$defs``, returning a flat schema.
+
+    ``pydantic``'s ``model_json_schema()`` emits ``$ref``/``$defs`` for any
+    nested ``BaseModel`` field (e.g. ``pn2t``'s ``list[HardPositive]``), and
+    llama.cpp's JSON-schema-to-grammar converter doesn't reliably resolve
+    ``$ref`` in every version -- left unresolved, the referenced item type
+    can end up under-constrained in the generated grammar (notably, list
+    fields losing their element schema), which manifests as generation that
+    never converges to a well-formed stop and runs to ``max_tokens`` instead.
+    Must run before every ``complete_json`` call, not just ones known to
+    reference nested models.
+    """
+    defs = schema.get("$defs", {})
+
+    def resolve(node: Any, _visiting: frozenset[str] = frozenset()) -> Any:
+        if isinstance(node, dict):
+            if "$ref" in node:
+                ref: str = node["$ref"]
+                if ref.startswith("#/$defs/") and ref not in _visiting:
+                    return resolve(defs[ref[len("#/$defs/") :]], _visiting | {ref})
+                return node  # circular ref -- leave as-is
+            return {k: resolve(v, _visiting) for k, v in node.items() if k != "$defs"}
+        if isinstance(node, list):
+            return [resolve(item, _visiting) for item in node]
+        return node
+
+    return resolve(schema)  # type: ignore[no-any-return]

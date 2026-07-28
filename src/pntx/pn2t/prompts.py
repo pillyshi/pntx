@@ -50,11 +50,12 @@ positive_evidence, or confusing_evidence to be written in {language}."""
 def build_system_message() -> str:
     """Render ``SYSTEM`` with ``HardPositiveGenerationResult``'s JSON schema inlined.
 
-    Unlike semaxis (which relies on the LLM client enforcing the schema via
-    grammar-constrained decoding), pntx's ``Backend`` protocol only exposes
-    plain text completion, so the schema is spelled out in the prompt itself
-    and the response is validated (with a retry) after the fact -- see
-    ``pn2t._structured``.
+    The schema is spelled out in the prompt regardless of backend: for
+    backends without grammar-constrained decoding it's the only thing
+    keeping output on-schema (validated, with a retry, after the fact -- see
+    ``pn2t._structured``); for backends that do constrain decoding (e.g.
+    ``LlamaCppBackend``), the grammar only enforces JSON syntax, not field
+    semantics or the requested item count, so the prompt still carries that.
     """
     return SYSTEM.format(schema=json.dumps(HardPositiveGenerationResult.model_json_schema()))
 
@@ -130,9 +131,7 @@ written in {language}."""
 
 def build_synthetic_system_message() -> str:
     """Render ``SYNTHETIC_SYSTEM`` with ``SyntheticGenerationResult``'s JSON schema inlined."""
-    return SYNTHETIC_SYSTEM.format(
-        schema=json.dumps(SyntheticGenerationResult.model_json_schema())
-    )
+    return SYNTHETIC_SYSTEM.format(schema=json.dumps(SyntheticGenerationResult.model_json_schema()))
 
 
 def build_synthetic_user_message(

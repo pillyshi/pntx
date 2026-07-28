@@ -50,9 +50,7 @@ def test_model_path_constructs_llama_directly() -> None:
 
 
 def test_repo_id_uses_from_pretrained() -> None:
-    backend = LlamaCppBackend(
-        repo_id="org/repo", filename="*q4_k_m.gguf", n_gpu_layers=-1
-    )
+    backend = LlamaCppBackend(repo_id="org/repo", filename="*q4_k_m.gguf", n_gpu_layers=-1)
 
     kwargs = backend._llm.init_kwargs  # type: ignore[attr-defined]
     assert kwargs["from_pretrained"] is True
@@ -114,7 +112,7 @@ def test_max_choice_tokens_empty_choices_is_zero() -> None:
 
 
 class _FakeGrammar:
-    def __init__(self, schema_json: str) -> None:
+    def __init__(self, schema_json: str, verbose: bool = True) -> None:
         self.schema_json = schema_json
 
 
@@ -149,6 +147,62 @@ def test_complete_json_constrains_decoding_with_grammar_from_schema(
     assert isinstance(grammar, _FakeGrammar)
     assert grammar.schema_json == json.dumps(schema)
     assert create_completion_calls[0]["max_tokens"] == 64
+
+
+def test_complete_json_inlines_refs_before_building_grammar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pydantic emits ``$ref``/``$defs`` for nested ``BaseModel`` fields (e.g.
+    ``pn2t``'s ``list[HardPositive]``), and llama.cpp's schema-to-grammar
+    converter doesn't reliably resolve ``$ref`` in every version. Left
+    unresolved, the referenced item type ends up under-constrained in the
+    grammar -- notably, list fields lose their element schema -- which lets
+    generation run to ``max_tokens`` instead of converging. Regression test
+    for that: the schema handed to ``LlamaGrammar.from_json_schema`` must
+    have every ``$ref`` inlined and no leftover ``$defs``.
+    """
+    backend = LlamaCppBackend(model_path="model.gguf")
+    backend._llm.n_ctx = lambda: 4096  # type: ignore[method-assign]
+    backend._llm.tokenize = (  # type: ignore[method-assign]
+        lambda text, add_bos=True, special=False: [1, 2, 3]
+    )
+
+    monkeypatch.setattr(
+        llama_cpp,
+        "LlamaGrammar",
+        type("_LlamaGrammar", (), {"from_json_schema": staticmethod(_FakeGrammar)}),
+    )
+    create_completion_calls: list[dict[str, Any]] = []
+
+    def _create_completion(prompt_tokens: list[int], **kwargs: Any) -> dict[str, Any]:
+        create_completion_calls.append(kwargs)
+        return {"choices": [{"text": "{}"}]}
+
+    backend._llm.create_completion = _create_completion  # type: ignore[method-assign]
+
+    schema = {
+        "$defs": {
+            "Item": {
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            }
+        },
+        "type": "object",
+        "properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/Item"}}},
+        "required": ["items"],
+    }
+    backend.complete_json("prompt", schema=schema, max_tokens=64)
+
+    grammar = create_completion_calls[0]["grammar"]
+    assert isinstance(grammar, _FakeGrammar)
+    resolved_schema = json.loads(grammar.schema_json)
+    assert "$defs" not in resolved_schema
+    assert resolved_schema["properties"]["items"]["items"] == {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+    }
 
 
 def test_count_tokens_returns_token_count_without_bos() -> None:
