@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ctypes
 import json
+import logging
 import warnings
 from typing import Any
 
@@ -17,6 +19,46 @@ except ImportError as e:
 # model's actual template, so it's a conservative fixed margin rather than a
 # precise count.
 _CHAT_TEMPLATE_OVERHEAD = 64
+
+# ggml_log_level -> logging level. Level 5 (GGML_LOG_LEVEL_CONT) means "continue
+# the previous line" and has no level of its own, so it inherits whatever the
+# last non-continuation line mapped to.
+_GGML_LOG_LEVEL_TO_LOGGING_LEVEL = {
+    0: logging.CRITICAL,
+    1: logging.INFO,
+    2: logging.WARNING,
+    3: logging.ERROR,
+    4: logging.DEBUG,
+    5: logging.DEBUG,
+}
+
+# llama-cpp-python registers its own ggml/llama.cpp log callback at import
+# time (llama_cpp._logger), which gates on this same logger's level but then
+# prints straight to stderr rather than through the Handler pipeline -- so a
+# Handler attached to this logger is silently never invoked. Replace it with
+# one that actually calls logger.log(...), so callers can redirect llama.cpp's
+# native logs (e.g. to a file) the same way as any other stdlib logger,
+# without pntx installing a Handler/destination of its own.
+_native_logger = logging.getLogger("llama-cpp-python")
+_last_ggml_log_level = _GGML_LOG_LEVEL_TO_LOGGING_LEVEL[0]
+
+
+@llama_cpp.llama_log_callback  # type: ignore[untyped-decorator]  # ctypes.CFUNCTYPE result has no stub signature
+def _llama_log_callback(level: int, text: bytes, user_data: ctypes.c_void_p) -> None:
+    global _last_ggml_log_level
+    mapped_level = (
+        _GGML_LOG_LEVEL_TO_LOGGING_LEVEL[level] if level != 5 else _last_ggml_log_level
+    )
+    # Most lines carry a trailing '\n'; progress-report dots ('.') repeated
+    # without one are the documented exception (see llama_cpp's own
+    # llama_log_callback signature comment).
+    msg = text.decode("utf-8", errors="replace").rstrip("\n")
+    if msg:
+        _native_logger.log(mapped_level, msg)
+    _last_ggml_log_level = mapped_level
+
+
+llama_cpp.llama_log_set(_llama_log_callback, ctypes.c_void_p(0))
 
 
 class LlamaCppBackend:
@@ -87,7 +129,9 @@ class LlamaCppBackend:
         token until ``max_tokens`` cuts it off instead of naturally closing.
 
         Remaining ``kwargs`` (e.g. ``n_ctx``, ``n_gpu_layers``, ``flash_attn``)
-        are forwarded as-is to ``llama_cpp.Llama``.
+        are forwarded as-is to ``llama_cpp.Llama``. ``verbose`` defaults to
+        ``False`` here (``llama_cpp.Llama`` itself defaults to ``True``), so
+        ggml/llama.cpp's native logs stay quiet unless the caller opts in.
         """
         if (model_path is None) == (repo_id is None):
             raise ValueError("exactly one of model_path or repo_id must be given")
@@ -95,6 +139,10 @@ class LlamaCppBackend:
         # Scoring needs per-token logits, which llama.cpp only keeps around
         # when logits_all=True.
         kwargs["logits_all"] = True
+        # llama-cpp-python defaults verbose=True, which prints ggml/llama.cpp's
+        # native logs (and wraps loading in its own fd-suppression only when
+        # verbose is False); quiet by default, overridable via kwargs.
+        kwargs.setdefault("verbose", False)
         if repo_id is not None:
             self._llm = llama_cpp.Llama.from_pretrained(
                 repo_id=repo_id, filename=filename, **kwargs
