@@ -45,6 +45,7 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         backend_kwargs: dict[str, Any] | None = None,
         selector: Selector | None = None,
         max_exemplars: int | None = None,
+        temperature: float = 0.0,
     ) -> None:
         """``backend`` is either a ready-made ``Backend`` instance, or the name
         of a built-in backend (e.g. ``"llama"``) to construct lazily from
@@ -59,11 +60,18 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         ``max_exemplars`` caps how many fitted texts ``selector`` is asked to
         pick *per class* for a single prompt; ``None`` means "as many as are
         fitted".
+
+        ``temperature`` is only used by the generation-based fallback path
+        (backends that don't implement ``ScoringBackend``); it defaults to
+        ``0.0`` since classification should be as deterministic as possible,
+        unlike ``pn2t``'s samplers, which default to ``1.0`` to encourage
+        varied generation.
         """
         self.backend = backend
         self.backend_kwargs = backend_kwargs
         self.selector = selector
         self.max_exemplars = max_exemplars
+        self.temperature = temperature
 
     def fit(self, X: Iterable[str], y: Iterable[Any]) -> Classifier:
         """Store the ``X`` texts, grouped by ``y`` into two independent pools.
@@ -141,7 +149,7 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         if isinstance(self.backend_, BatchBackend):
             raw_completions = self.backend_.complete_batch(
                 completion_prompts,
-                temperature=0.0,
+                temperature=self.temperature,
                 max_tokens=prompts.CLASSIFY_COMPLETION_MAX_TOKENS,
             )
         else:
@@ -149,7 +157,9 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
             # at a time. (A BatchBackend implementation takes the branch above.)
             raw_completions = [
                 self.backend_.complete(
-                    prompt, temperature=0.0, max_tokens=prompts.CLASSIFY_COMPLETION_MAX_TOKENS
+                    prompt,
+                    temperature=self.temperature,
+                    max_tokens=prompts.CLASSIFY_COMPLETION_MAX_TOKENS,
                 )
                 for prompt in completion_prompts
             ]

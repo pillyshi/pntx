@@ -76,6 +76,11 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
     both aim for a more representative/diverse exemplar set than a random
     subset.
 
+    ``temperature`` defaults to ``1.0`` (unlike ``t2pn.Classifier``, which
+    defaults to ``0.0``) since hard-positive generation benefits from varied
+    output across batches, whereas classification should be as deterministic
+    as possible.
+
     Fitted attributes:
         generation_result_: Full LLM response including feature analysis and
             per-sample evidence. Useful for auditing boundary-defining
@@ -109,6 +114,7 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         seed: int | None = None,
         sample_method: str = "random",
         embedding_model: str = "paraphrase-albert-small-v2",
+        temperature: float = 1.0,
         verbose: bool = False,
         logger: _Logger | None = None,
     ) -> None:
@@ -124,6 +130,7 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         self.seed = seed
         self.sample_method = sample_method
         self.embedding_model = embedding_model
+        self.temperature = temperature
         self.verbose = verbose
         self.logger = logger
 
@@ -267,6 +274,7 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
                         system,
                         user,
                         HardPositiveGenerationResult,
+                        temperature=self.temperature,
                         max_tokens=self.max_tokens,
                     )
                 except Exception as e:
