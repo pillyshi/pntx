@@ -13,7 +13,7 @@ from sklearn.base import BaseEstimator
 from .._backend_resolve import resolve_backend
 from .._sklearn import LLMEstimatorMixin
 from ..backends.base import Backend
-from ..selection import _SAMPLE_METHODS, sample_group
+from ..selection import _SAMPLE_METHODS, default_tokenizer, sample_group
 from . import prompts
 from ._structured import complete_structured
 from ._types import HardPositiveGenerationResult
@@ -21,17 +21,10 @@ from ._types import HardPositiveGenerationResult
 __all__ = ["OverSampler"]
 
 _PROMPT_OVERHEAD = 500
-_DEFAULT_CHARS_PER_TOKEN = 4
 
 
 class _Logger(Protocol):
     def debug(self, msg: object, /, *args: object, **kwargs: object) -> None: ...
-
-
-def _default_tokenizer(text: str) -> int:
-    """Rough token-count fallback for backends without ``count_tokens``
-    (e.g. ``LlamaCppBackend`` has one; other backends may not)."""
-    return len(text) // _DEFAULT_CHARS_PER_TOKEN + 1
 
 
 class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
@@ -213,7 +206,7 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
             return list(X), y_list
 
         budget = (self.context_limit - _PROMPT_OVERHEAD - self.max_tokens) // 2
-        tokenizer_fn = getattr(self.backend_, "count_tokens", _default_tokenizer)
+        tokenizer_fn = getattr(self.backend_, "count_tokens", default_tokenizer)
 
         shortest_pos = min(tokenizer_fn(t) for t in pos_texts)
         if shortest_pos > budget:

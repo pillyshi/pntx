@@ -13,6 +13,19 @@ if TYPE_CHECKING:
 
 SimilarityFn = Callable[[str, str], float]
 
+DEFAULT_CHARS_PER_TOKEN = 4
+
+
+def default_tokenizer(text: str) -> int:
+    """Rough token-count fallback for backends without ``count_tokens``
+    (e.g. ``LlamaCppBackend`` has one; other backends may not).
+
+    Shared by every budget-aware sampler in the package (``t2pn.Classifier``,
+    ``pn2t.OverSampler``, ``pn2t.SyntheticSampler``) so they all fall back to
+    the same estimate.
+    """
+    return len(text) // DEFAULT_CHARS_PER_TOKEN + 1
+
 
 @runtime_checkable
 class Selector(Protocol):

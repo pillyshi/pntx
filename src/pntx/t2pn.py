@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+import random
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import numpy as np
@@ -13,7 +14,7 @@ from . import prompts
 from ._backend_resolve import resolve_backend
 from ._sklearn import LLMEstimatorMixin
 from .backends.base import Backend, BatchBackend, BatchScoringBackend, ScoringBackend
-from .selection import RandomSelector, Selector
+from .selection import BudgetSelector, Selector, _trim_to_budget, default_tokenizer
 from .types import NEGATIVE, POSITIVE
 
 __all__ = ["Classifier"]
@@ -30,12 +31,33 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
     need to be aligned pairs beyond the usual per-sample correspondence.
     Exactly two classes must be present in ``y``.
 
-    ``y`` may be any two hashable, orderable values (e.g. ``0``/``1`` or
-    ``"positive"``/``"negative"``); by scikit-learn's binary-classification
-    convention, the greater of the two (``classes_[1]``, e.g. ``1`` or
-    ``"positive"``) is treated as the prompt's "positive" role and the lesser
-    (``classes_[0]``) as "negative". ``predict_proba``'s columns follow
-    ``classes_`` order.
+    ``y`` may be any two hashable, orderable values (e.g. ``0``/``1``,
+    ``-1``/``1``, or ``"positive"``/``"negative"``); by scikit-learn's
+    binary-classification convention, the greater of the two
+    (``classes_[1]``, e.g. ``1`` or ``"positive"``) is treated as the
+    prompt's "positive" role and the lesser (``classes_[0]``) as "negative".
+    ``predict_proba``'s columns follow ``classes_`` order.
+
+    ``context_limit`` is the token budget for the *whole* per-call prompt
+    (the few-shot exemplar block, shared across every text being classified
+    in one ``predict``/``predict_proba`` call, plus that call's query text
+    and label choices/response) -- pass a backend's actual context window
+    (e.g. ``LlamaCppBackend``'s ``n_ctx``) as ``context_limit``. Exemplars
+    are sampled to fit within ``(context_limit - reserve) // 2`` tokens per
+    class, where ``reserve`` is computed per call from the longest text in
+    that call's ``X`` plus the label choices (``ScoringBackend`` path) or
+    the completion response (fallback path) -- unlike ``pn2t``'s samplers,
+    which reserve a fixed ``max_tokens`` for an LLM response of unknown
+    length, ``Classifier`` already knows every query it needs to score, so
+    it can size the reservation exactly instead of conservatively. After
+    budget-fitting, the larger class is randomly trimmed down to the
+    smaller class's count, so positive and negative are represented
+    equally in the few-shot prompt regardless of how lopsided the fitted
+    pools are (mirrors ``pn2t.OverSampler``'s per-class budget split and
+    count balancing). This replaces relying on the backend's own
+    last-resort context trimming, which -- being backend-level -- knows
+    nothing about exemplar boundaries or class balance and can silently
+    truncate mid-exemplar.
     """
 
     def __init__(
@@ -45,6 +67,7 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         backend_kwargs: dict[str, Any] | None = None,
         selector: Selector | None = None,
         max_exemplars: int | None = None,
+        context_limit: int = 100_000,
         temperature: float = 0.0,
     ) -> None:
         """``backend`` is either a ready-made ``Backend`` instance, or the name
@@ -57,9 +80,18 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         ``clone()`` (which requires every ``__init__`` parameter to be
         individually named).
 
+        ``selector`` picks which fitted texts (up to ``max_exemplars`` per
+        class) are candidates for the few-shot prompt; ``None`` (default)
+        samples a random subset that fits the per-class token budget
+        derived from ``context_limit`` (see the class docstring). Whatever
+        ``selector`` returns -- default or user-supplied (e.g.
+        ``NearestSelector``/``DiversitySelector``) -- is still trimmed to
+        that budget as a final guarantee, so any selector stays safe to use
+        with pools too large to fit.
+
         ``max_exemplars`` caps how many fitted texts ``selector`` is asked to
-        pick *per class* for a single prompt; ``None`` means "as many as are
-        fitted".
+        pick *per class* for a single prompt, on top of the token budget;
+        ``None`` means "as many as fit the budget".
 
         ``temperature`` is only used by the generation-based fallback path
         (backends that don't implement ``ScoringBackend``); it defaults to
@@ -71,6 +103,7 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         self.backend_kwargs = backend_kwargs
         self.selector = selector
         self.max_exemplars = max_exemplars
+        self.context_limit = context_limit
         self.temperature = temperature
 
     def fit(self, X: Iterable[str], y: Iterable[Any]) -> Classifier:
@@ -95,7 +128,6 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         self.positive_ = [text for text, label in zip(X, y, strict=True) if label == classes[1]]
         self.negative_ = [text for text, label in zip(X, y, strict=True) if label == classes[0]]
         self.backend_ = resolve_backend(self.backend, self.backend_kwargs)
-        self.selector_ = self.selector if self.selector is not None else RandomSelector()
         return self
 
     def predict(self, X: Iterable[str]) -> NDArray[Any]:
@@ -123,8 +155,30 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         if not texts:
             return np.empty((0, 2))
 
-        positive = self.selector_.select(self.positive_, self._exemplar_count(self.positive_))
-        negative = self.selector_.select(self.negative_, self._exemplar_count(self.negative_))
+        tokenizer_fn = getattr(self.backend_, "count_tokens", default_tokenizer)
+        max_query_tokens = max(tokenizer_fn(text) for text in texts)
+        if isinstance(self.backend_, ScoringBackend):
+            reserve = max_query_tokens + max(
+                tokenizer_fn(choice) for choice in prompts.classify_choice_texts()
+            )
+        else:
+            reserve = max_query_tokens + prompts.CLASSIFY_COMPLETION_MAX_TOKENS
+
+        budget = (self.context_limit - reserve) // 2
+        if budget < 1:
+            raise ValueError(
+                f"context_limit ({self.context_limit}) leaves no token budget for exemplars "
+                f"after reserving {reserve} tokens for the longest text being classified "
+                "(plus label choices/response); raise context_limit"
+            )
+
+        positive = self._select_exemplars(self.positive_, budget, tokenizer_fn)
+        negative = self._select_exemplars(self.negative_, budget, tokenizer_fn)
+        n_balanced = min(len(positive), len(negative))
+        if len(positive) > n_balanced:
+            positive = random.sample(positive, n_balanced)
+        if len(negative) > n_balanced:
+            negative = random.sample(negative, n_balanced)
 
         if isinstance(self.backend_, ScoringBackend):
             choices = prompts.classify_choice_texts()
@@ -167,6 +221,25 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
 
     def _exemplar_count(self, pool: list[str]) -> int:
         return self.max_exemplars if self.max_exemplars is not None else len(pool)
+
+    def _select_exemplars(
+        self, pool: list[str], budget: int, tokenizer_fn: Callable[[str], int]
+    ) -> list[str]:
+        """Pick candidates from ``pool`` (via ``selector``, or a random
+        budget-fit subset if none was configured), then trim the result to
+        ``budget`` tokens as a final guarantee -- applied uniformly whether
+        ``selector`` is the default or user-supplied, so a selector that
+        isn't itself budget-aware (e.g. ``NearestSelector``) can't blow the
+        budget.
+        """
+        k = self._exemplar_count(pool)
+        if self.selector is None:
+            candidates = BudgetSelector(tokenizer_fn=tokenizer_fn, token_budget=budget).select(
+                pool, k
+            )
+        else:
+            candidates = self.selector.select(pool, k)
+        return _trim_to_budget(candidates, budget, tokenizer_fn)
 
     def __sklearn_tags__(self) -> Any:
         tags = super().__sklearn_tags__()

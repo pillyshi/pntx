@@ -58,7 +58,7 @@ def test_fit_groups_pools_by_label_and_check_is_fitted_passes() -> None:
 
 @pytest.mark.parametrize(
     "y_positive,y_negative",
-    [("positive", "negative"), (1, 0)],
+    [("positive", "negative"), (1, 0), (1, -1)],
 )
 def test_predict_proba_scoring_backend_path(y_positive: object, y_negative: object) -> None:
     X = SAMPLE_POSITIVE + SAMPLE_NEGATIVE
@@ -83,6 +83,46 @@ def test_predict_proba_scoring_backend_uses_batch_scoring_when_available() -> No
     assert proba.shape == (3, 2)
     assert len(backend.batch_calls) == 1
     assert len(backend.batch_calls[0][1]) == 3  # 3 queries scored in one batched call
+
+
+def test_predict_proba_balances_unequal_pool_sizes() -> None:
+    positive_texts = ["pos one", "pos two", "pos three", "pos four"]
+    negative_texts = ["neg one"]
+    X = positive_texts + negative_texts
+    y = ["positive"] * len(positive_texts) + ["negative"] * len(negative_texts)
+    backend = FakeBatchBackend()
+    clf = Classifier(backend=backend).fit(X, y)
+
+    clf.predict_proba(["query"])
+
+    prefix = backend.batch_calls[0][0]
+    # The negative pool only has 1 text, so positive must be trimmed down to
+    # match rather than including all 4 of its texts.
+    assert prefix.count("Label: positive") == prefix.count("Label: negative") == 1
+
+
+def test_predict_proba_trims_exemplars_to_fit_context_limit() -> None:
+    positive_texts = ["p" * 400 for _ in range(10)]
+    negative_texts = ["n" * 400 for _ in range(10)]
+    X = positive_texts + negative_texts
+    y = ["positive"] * len(positive_texts) + ["negative"] * len(negative_texts)
+    backend = FakeBatchBackend()
+    clf = Classifier(backend=backend, context_limit=600).fit(X, y)
+
+    clf.predict_proba(["query"])
+
+    prefix = backend.batch_calls[0][0]
+    positive_count = prefix.count("Label: positive")
+    assert 0 < positive_count < len(positive_texts)
+    assert positive_count == prefix.count("Label: negative")
+
+
+def test_predict_proba_raises_when_context_limit_too_small_for_reserve() -> None:
+    X, y = _fit_texts_and_labels()
+    backend = FakeBatchBackend()
+    clf = Classifier(backend=backend, context_limit=1).fit(X, y)
+    with pytest.raises(ValueError, match="context_limit"):
+        clf.predict_proba(["some reasonably long query text"])
 
 
 def test_predict_proba_falls_back_to_per_item_scoring_without_batch_backend() -> None:
