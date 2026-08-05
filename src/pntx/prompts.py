@@ -18,6 +18,16 @@ merging with the preceding colon)."""
 _EXEMPLAR_TEMPLATE = "Text: {text}\nLabel: {label}\n\n"
 _QUERY_TEMPLATE = "Text: {text}\nLabel:"
 
+CONTENT_FREE_QUERY = ""
+"""Placeholder query used to probe a few-shot prompt's own label bias for
+content-free calibration (Zhao et al. 2021, "Calibrate Before Use: Improving
+Few-Shot Performance of Language Models"): score this in place of a real
+query against the same exemplar prefix, and the resulting label distribution
+estimates how much the prefix (exemplar choice/order) skews predictions
+regardless of query content. An empty string is the language-agnostic
+choice -- unlike e.g. "N/A", it doesn't privilege a language or risk being a
+real domain token."""
+
 
 def build_exemplar_prefix(positive: list[str], negative: list[str]) -> str:
     """Render the few-shot block for ``positive``/``negative`` exemplars,

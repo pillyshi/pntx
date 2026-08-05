@@ -36,6 +36,17 @@ class Selector(Protocol):
     is the text being classified, for selectors that pick texts relevant to
     it (e.g. ``NearestSelector``); selectors that don't use it (e.g.
     ``RandomSelector``) simply ignore the argument.
+
+    ``query_aware`` is an optional class attribute (not part of the required
+    structural contract, so existing minimal duck-typed implementations don't
+    break) that callers can use to detect whether a selector's output
+    actually depends on ``query`` -- e.g. ``t2pn.Classifier`` uses
+    ``getattr(selector, "query_aware", False)`` to decide whether it must
+    reselect exemplars per text being classified (losing shared-prefix
+    batching in the process) instead of once per ``predict``/``predict_proba``
+    call. Selectors that ignore ``query`` should leave it ``False`` (the
+    default under ``getattr``); ``NearestSelector`` is the only builtin that
+    sets it ``True``.
     """
 
     def select(self, pool: list[str], k: int, query: str | None = None) -> list[str]: ...
@@ -43,6 +54,8 @@ class Selector(Protocol):
 
 class RandomSelector:
     """Selects a uniform random subset of ``pool``, ignoring ``query``."""
+
+    query_aware = False
 
     def __init__(self, seed: int | None = None) -> None:
         self._rng = random.Random(seed)
@@ -65,6 +78,8 @@ class NearestSelector:
     the first ``k`` texts in ``pool`` order; use ``RandomSelector`` or
     ``DiversitySelector`` if that's not the fallback you want.
     """
+
+    query_aware = True
 
     def __init__(self, similarity_fn: SimilarityFn = dedup.similarity) -> None:
         self.similarity_fn = similarity_fn
@@ -105,6 +120,8 @@ class BudgetSelector:
     tokenizing (e.g. ``LlamaCppBackend.count_tokens``), so the budget
     reflects real token counts rather than an approximation.
     """
+
+    query_aware = False
 
     def __init__(
         self, tokenizer_fn: Callable[[str], int], token_budget: int, seed: int | None = None
@@ -148,6 +165,8 @@ class DiversitySelector:
     character n-grams); pass e.g. ``pntx.embeddings.cosine_similarity_fn()``
     for semantic similarity instead.
     """
+
+    query_aware = False
 
     def __init__(self, similarity_fn: SimilarityFn = dedup.similarity) -> None:
         self.similarity_fn = similarity_fn

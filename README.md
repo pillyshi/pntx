@@ -172,6 +172,30 @@ from pntx.selection import NearestSelector
 clf = Classifier(backend="llama", backend_kwargs={"model_path": "model.gguf"}, selector=NearestSelector())
 ```
 
+`Classifier` treats a selector as **static** or **dynamic** based on its
+`query_aware` attribute (`RandomSelector`/`DiversitySelector`/`BudgetSelector` are
+static; `NearestSelector` is the only built-in dynamic one):
+
+- **Static** (default): exemplar selection, ordering, and calibration (see below) are
+  all resolved once in `fit()` and reused by every later `predict`/`predict_proba`
+  call — this is what lets a `BatchScoringBackend` (e.g. `LlamaCppBackend`) evaluate
+  the shared few-shot prefix once per call and reuse its KV cache across the whole
+  batch.
+- **Dynamic** (e.g. `NearestSelector`): exemplars genuinely relevant to each text
+  can't be known ahead of time, so selection reruns per text inside
+  `predict`/`predict_proba` instead. For a `BatchScoringBackend` this forfeits the
+  shared-prefix KV-cache reuse above (each text gets its own prefix and its own
+  backend call), and `Classifier` raises a `UserWarning` once per call to flag the
+  latency trade-off.
+
+`Classifier` also applies **content-free calibration** (Zhao et al. 2021, "Calibrate
+Before Use") by default on the `ScoringBackend` path: it scores an empty placeholder
+query against the same few-shot prefix to estimate the prefix's own label bias (an
+artifact of which exemplars ended up in it and in what order — few-shot prompts are
+known to be sensitive to this), then divides each real prediction by that baseline and
+renormalizes. Pass `Classifier(..., calibrate=False)` to disable it and get the raw,
+uncalibrated softmax instead.
+
 `OverSampler` and `SyntheticSampler` don't take a `Selector`; instead their
 `sample_method` constructor argument picks a *budget-based* sampling strategy (a full
 port of semaxis's own `sample_method`/`embedding_model` for `OverSampler`;
