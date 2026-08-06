@@ -1,6 +1,6 @@
 [project]
 name = "pntx"
-version = "0.11.0"
+version = "0.12.0"
 description = "Generate and classify text from user-defined positive/negative example pools"
 readme = "README.md"
 license = "MIT"

@@ -46,7 +46,7 @@ loaded = LLMPromptingClassifier.load("classifier.json", backend="llama",
 # --- t2pn: classification via fine-tuning a pretrained encoder (pntx[finetuning]) ---
 from pntx.t2pn import FineTuningClassifier
 
-ft_clf = FineTuningClassifier()  # default model_name is multilingual BERT
+ft_clf = FineTuningClassifier(class_weight="balanced")  # default model_name is multilingual BERT
 ft_clf.fit(X, y)                 # this one actually trains
 ft_clf.predict_proba(["The staff were incredibly friendly"])
 ft_clf.save("finetuned/")        # persists the trained weights, not just pooled text

@@ -60,6 +60,7 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         learning_rate: float = 2e-5,
         batch_size: int = 8,
         max_length: int = 128,
+        class_weight: str | dict[Any, float] | None = None,
         device: str | None = None,
         seed: int | None = None,
     ) -> None:
@@ -69,6 +70,17 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         checkpoint (``bert-base-multilingual-cased``) since the pools'
         language is user-defined and not assumed to be any one language.
 
+        ``class_weight`` follows scikit-learn's convention: ``None`` (default)
+        trains on the unweighted loss; ``"balanced"`` weights each class
+        inversely proportional to its frequency in the fitted ``y`` (``n_samples
+        / (2 * class_count)``), same formula as
+        ``sklearn.utils.class_weight.compute_class_weight("balanced", ...)``;
+        or a ``{class_label: weight}`` dict (keys must match the two distinct
+        values seen in ``y``) for explicit weights. Unlike
+        ``LLMPromptingClassifier``, which rebalances by trimming the larger
+        exemplar pool per prompt, an imbalanced fitted pool here just skews the
+        loss towards the majority class unless ``class_weight`` corrects for it.
+
         ``device`` defaults to ``None``, which resolves to ``"cuda"`` if
         available, else ``"cpu"``.
         """
@@ -77,6 +89,7 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.max_length = max_length
+        self.class_weight = class_weight
         self.device = device
         self.seed = seed
 
@@ -111,6 +124,7 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
 
         target_ids = [0 if label == classes[0] else 1 for label in labels]
         optimizer = torch.optim.AdamW(self.model_.parameters(), lr=self.learning_rate)
+        loss_fn = torch.nn.CrossEntropyLoss(weight=self._resolve_class_weight(classes, target_ids))
 
         self.model_.train()
         for _ in range(self.epochs):
@@ -127,11 +141,47 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
                 target_tensor = torch.tensor(batch_targets, device=self.device_)
 
                 optimizer.zero_grad()
-                outputs = self.model_(**encoded, labels=target_tensor)
-                outputs.loss.backward()
+                # Compute the loss ourselves (rather than the model's own
+                # labels= path) so class_weight can be applied -- transformers'
+                # built-in loss for a labels= call doesn't accept per-class
+                # weights.
+                logits = self.model_(**encoded).logits
+                loss = loss_fn(logits, target_tensor)
+                loss.backward()
                 optimizer.step()
         self.model_.eval()
         return self
+
+    def _resolve_class_weight(
+        self, classes: list[Any], target_ids: list[int]
+    ) -> torch.Tensor | None:
+        """Resolve ``class_weight`` into a ``(2,)`` tensor ordered
+        ``[weight for classes[0], weight for classes[1]]``, or ``None`` for
+        the unweighted loss."""
+        if self.class_weight is None:
+            return None
+        if isinstance(self.class_weight, str):
+            if self.class_weight != "balanced":
+                raise ValueError(
+                    "class_weight must be None, 'balanced', or a "
+                    f"{{class_label: weight}} dict, got {self.class_weight!r}"
+                )
+            counts = np.bincount(target_ids, minlength=2)
+            balanced_weights = len(target_ids) / (2 * counts)
+            return torch.tensor(balanced_weights, dtype=torch.float32, device=self.device_)
+        if isinstance(self.class_weight, dict):
+            try:
+                dict_weights = [self.class_weight[classes[0]], self.class_weight[classes[1]]]
+            except KeyError as e:
+                raise ValueError(
+                    f"class_weight dict must have an entry for each class in {classes}, "
+                    f"missing {e}"
+                ) from e
+            return torch.tensor(dict_weights, dtype=torch.float32, device=self.device_)
+        raise ValueError(
+            "class_weight must be None, 'balanced', or a {class_label: weight} dict, "
+            f"got {self.class_weight!r}"
+        )
 
     def predict(self, X: Iterable[str]) -> NDArray[Any]:
         """Predict the most likely class (from ``classes_``) for each text in ``X``."""

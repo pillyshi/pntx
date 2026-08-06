@@ -130,3 +130,55 @@ def test_sklearn_pipeline_and_cross_val_score(tiny_checkpoint: str) -> None:
     pipe = Pipeline([("clf", _classifier(tiny_checkpoint))])
     scores = cross_val_score(pipe, X, Y, cv=2)
     assert len(scores) == 2
+
+
+def test_resolve_class_weight_none_by_default(tiny_checkpoint: str) -> None:
+    clf = _classifier(tiny_checkpoint)
+    clf.device_ = "cpu"
+    assert clf._resolve_class_weight(["negative", "positive"], [0, 0, 0, 1]) is None
+
+
+def test_resolve_class_weight_balanced_matches_sklearn_formula(tiny_checkpoint: str) -> None:
+    clf = _classifier(tiny_checkpoint, class_weight="balanced")
+    clf.device_ = "cpu"
+    # 3 negative (id 0), 1 positive (id 1): n_samples / (n_classes * class_count)
+    weight = clf._resolve_class_weight(["negative", "positive"], [0, 0, 0, 1])
+    assert weight is not None
+    np.testing.assert_allclose(weight.numpy(), [4 / (2 * 3), 4 / (2 * 1)])
+
+
+def test_resolve_class_weight_dict(tiny_checkpoint: str) -> None:
+    clf = _classifier(tiny_checkpoint, class_weight={"negative": 1.0, "positive": 5.0})
+    clf.device_ = "cpu"
+    weight = clf._resolve_class_weight(["negative", "positive"], [0, 0, 0, 1])
+    assert weight is not None
+    np.testing.assert_allclose(weight.numpy(), [1.0, 5.0])
+
+
+def test_resolve_class_weight_dict_missing_key_raises(tiny_checkpoint: str) -> None:
+    clf = _classifier(tiny_checkpoint, class_weight={"negative": 1.0})
+    clf.device_ = "cpu"
+    with pytest.raises(ValueError, match="entry for each class"):
+        clf._resolve_class_weight(["negative", "positive"], [0, 0, 0, 1])
+
+
+def test_resolve_class_weight_invalid_string_raises(tiny_checkpoint: str) -> None:
+    clf = _classifier(tiny_checkpoint, class_weight="unbalanced")
+    clf.device_ = "cpu"
+    with pytest.raises(ValueError, match="class_weight"):
+        clf._resolve_class_weight(["negative", "positive"], [0, 0, 0, 1])
+
+
+def test_fit_with_balanced_class_weight_on_imbalanced_data(tiny_checkpoint: str) -> None:
+    X_imbalanced = X + ["great show", "great crowd"]  # 5 positive, 3 negative
+    Y_imbalanced = Y + ["positive", "positive"]
+    clf = _classifier(tiny_checkpoint, class_weight="balanced").fit(X_imbalanced, Y_imbalanced)
+    proba = clf.predict_proba(X_imbalanced)
+    assert proba.shape == (len(X_imbalanced), 2)
+    np.testing.assert_allclose(proba.sum(axis=1), np.ones(len(X_imbalanced)), atol=1e-5)
+
+
+def test_fit_with_invalid_class_weight_raises(tiny_checkpoint: str) -> None:
+    clf = _classifier(tiny_checkpoint, class_weight="unbalanced")
+    with pytest.raises(ValueError, match="class_weight"):
+        clf.fit(X, Y)

@@ -40,7 +40,10 @@ from sklearn.model_selection import cross_val_score
 cross_val_score(clf, X, y, cv=5)
 
 # --- t2pn: 事前学習済みエンコーダの fine-tuning による分類 (同じ Classifier 契約に乗る別実装) ---
-ft_clf = FineTuningClassifier(model_name="bert-base-multilingual-cased")  # 既定は multilingual BERT
+ft_clf = FineTuningClassifier(
+    model_name="bert-base-multilingual-cased",  # 既定は multilingual BERT
+    class_weight="balanced",  # 既定は None; sklearn 慣習で不均衡プールに対応
+)
 
 ft_clf.fit(X, y)               # 実際に事前学習済みエンコーダを fine-tuning する(学習が発生する)
 ft_clf.predict(X)
@@ -110,6 +113,7 @@ class ScoringBackend(Backend, Protocol):
 - `AutoModelForSequenceClassification` はアーキテクチャ非依存(`model_name` を差し替えるだけで BERT/RoBERTa/DeBERTa/多言語モデルなど任意の HF hub チェックポイントに切り替えられる)なので、クラス名は特定の BERT アーキテクチャに縛られない `FineTuningClassifier` とする。ただし `model_name` の既定値は multilingual BERT(`bert-base-multilingual-cased`)にする(`SyntheticSampler.n_synthesized` と違い、自然なデフォルトが存在するため必須パラメータにはしない)。
 - `fit(X, y)` は本当に学習を行う(この点は `LLMPromptingClassifier`/`OverSampler`/`SyntheticSampler` の「fit はプール保持のみで学習しない」という前提から明示的に外れる、`t2pn` 内で唯一の例外)。トークナイズ → 分類ヘッド(必要なら全体)の fine-tuning を `epochs`/`learning_rate`/`batch_size` 等のハイパーパラメータに従って行い、結果のモデル状態を `model_`/`tokenizer_` などの fitted attributes に保持する。
 - `predict`/`predict_proba` はバッチ forward pass + softmax で実装する(`LLMPromptingClassifier` 同様、逐次 for ループは避ける)。
+- `class_weight`(`None`(既定)/`"balanced"`/`{class_label: weight}` dict、sklearn 慣習)でクラス不均衡に対応する。`LLMPromptingClassifier` はプロンプトごとに大きい側のプールを小さい側に合わせてトリムすることでバランスを取るが、`FineTuningClassifier` は fit 済みプールをそのまま学習に使うため、不均衡なままだと損失が多数派クラスに引っ張られる — その対策は `class_weight` の責務であり、`OverSampler`/`SyntheticSampler` のようなサンプリング側のバランス調整は行わない。`"balanced"` は `n_samples / (2 * class_count)`(`sklearn.utils.class_weight.compute_class_weight("balanced", ...)` と同じ式)。`transformers` の `AutoModelForSequenceClassification` の `labels=` 経由の内蔵 loss はクラス重みを受け付けないため、`model(**encoded).logits` から `torch.nn.CrossEntropyLoss(weight=...)` で自前に loss を計算する。
 - 学習が発生するため `LLMPromptingClassifier` と異なりデータ量・計算コストに敏感(GPU 推奨)。どの程度のデータ量から実用的かはベンチマークで検証する。
 - optional dependency `pntx[finetuning]`(`transformers`, `torch`)未インストール時は明確な ImportError。
 - `save`/`load` で fine-tuned な重みごと永続化できるようにする(`OverSampler`/`SyntheticSampler` の JSON ラウンドトリップとは異なり、モデル重みを含むためディレクトリ or アーカイブ形式になる想定)。
@@ -166,7 +170,7 @@ class ScoringBackend(Backend, Protocol):
 
 - バックエンドは `FakeBackend`(決め打ち応答を返す `ScoringBackend` 実装)でモックする。実モデル・実 API を叩くテストは `tests/integration/` に分離し、デフォルトでは skip。
 - `t2pn.LLMPromptingClassifier`: `fit`/`predict`/`predict_proba` のユニットテストに加えて、`sklearn.pipeline.Pipeline`・`cross_val_score` に組み込んで壊れないことを確認するテストを持つ。`save`/`load` の往復(`backend` を含めずシリアライズされること、`load` 時に別の `FakeBackend` を注入して復元できること)も対象。
-- `t2pn.FineTuningClassifier`: 事前学習済みチェックポイントのダウンロードなしでユニットテストを完結させるため、`transformers` の `AutoConfig`(小さい `hidden_size`/`num_hidden_layers` 等)からランダム初期化した極小モデルで `fit`/`predict`/`predict_proba`・`Pipeline`/`cross_val_score` 互換・`save`/`load` を検証する(開発環境によっては huggingface.co 等の外部ホストに到達できない場合があるため、実在の事前学習済みチェックポイントのダウンロードを伴う確認は `tests/integration/` 側に分離する)。
+- `t2pn.FineTuningClassifier`: 事前学習済みチェックポイントのダウンロードなしでユニットテストを完結させるため、`transformers` の `AutoConfig`(小さい `hidden_size`/`num_hidden_layers` 等)からランダム初期化した極小モデルで `fit`/`predict`/`predict_proba`・`Pipeline`/`cross_val_score` 互換・`save`/`load` を検証する(開発環境によっては huggingface.co 等の外部ホストに到達できない場合があるため、実在の事前学習済みチェックポイントのダウンロードを伴う確認は `tests/integration/` 側に分離する)。`class_weight`(`None`/`"balanced"`/dict)の重み計算が正しいこと、不正な値で `ValueError` になることも対象。
 - `pn2t.OverSampler`: 「boundary feature 分析 → hard positive 生成 → dedup で棄却 → リトライ → 上限到達で警告」の分岐を必ずカバー。`n_synthesized=None` のクラスバランス自動計算、`save`/`load` の往復も対象。
 - `pn2t.SyntheticSampler`: `OverSampler` と同様の分岐に加え、negative 側がプロンプトに含まれないことの直接検証、`contains_verbatim_span` による漏洩 dedup(reject → リトライ、`min_verbatim_span` 可変、`deduplicate=False` で無効化されること)を必ずカバー。
 - dedup(完全一致・`contains_verbatim_span`)は日本語・英語両方のケースを入れる。
