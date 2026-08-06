@@ -290,7 +290,7 @@ class LlamaCppBackend:
             f"prompt ({len(tokens)} tokens) exceeds the available context budget "
             f"({budget} of {n_ctx} tokens, after reserving {reserve} for the "
             "response); dropping the oldest exemplars to fit. Pass "
-            "t2pn.Classifier(max_exemplars=...) to select fewer exemplars deliberately "
+            "t2pn.LLMPromptingClassifier(max_exemplars=...) to select fewer exemplars deliberately "
             "instead of relying on this truncation.",
             UserWarning,
             stacklevel=3,
@@ -330,7 +330,8 @@ class LlamaCppBackend:
             f"prompt ({len(tokens)} tokens) exceeds the available context budget "
             f"({budget} of {n_ctx} tokens, after reserving {reserve} for the response "
             f"and {_CHAT_TEMPLATE_OVERHEAD} for the chat template); dropping the oldest "
-            "exemplars to fit. Pass t2pn.Classifier(max_exemplars=...) to select fewer "
+            "exemplars to fit. Pass "
+            "t2pn.LLMPromptingClassifier(max_exemplars=...) to select fewer "
             "exemplars deliberately instead of relying on this truncation.",
             UserWarning,
             stacklevel=3,

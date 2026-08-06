@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pntx.backends.llama import LlamaCppBackend
-from pntx.t2pn import Classifier
+from pntx.t2pn import LLMPromptingClassifier
 
 from ..conftest import SAMPLE_NEGATIVE, SAMPLE_POSITIVE
 
@@ -14,7 +14,7 @@ def _fit_texts_and_labels() -> tuple[list[str], list[str]]:
 
 def test_predict_returns_a_valid_label(llama_backend: LlamaCppBackend) -> None:
     X, y = _fit_texts_and_labels()
-    clf = Classifier(backend=llama_backend).fit(X, y)
+    clf = LLMPromptingClassifier(backend=llama_backend).fit(X, y)
 
     pred = clf.predict([SAMPLE_POSITIVE[0]])
 
@@ -23,7 +23,7 @@ def test_predict_returns_a_valid_label(llama_backend: LlamaCppBackend) -> None:
 
 def test_predict_proba_rows_sum_to_one(llama_backend: LlamaCppBackend) -> None:
     X, y = _fit_texts_and_labels()
-    clf = Classifier(backend=llama_backend).fit(X, y)
+    clf = LLMPromptingClassifier(backend=llama_backend).fit(X, y)
 
     proba = clf.predict_proba(SAMPLE_POSITIVE)
 
@@ -35,7 +35,7 @@ def test_predict_proba_rows_sum_to_one(llama_backend: LlamaCppBackend) -> None:
 
 def test_batched_predict_matches_per_item_predict(llama_backend: LlamaCppBackend) -> None:
     X, y = _fit_texts_and_labels()
-    clf = Classifier(backend=llama_backend).fit(X, y)
+    clf = LLMPromptingClassifier(backend=llama_backend).fit(X, y)
     texts = SAMPLE_POSITIVE
 
     batched = list(clf.predict(texts))

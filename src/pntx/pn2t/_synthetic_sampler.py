@@ -74,7 +74,7 @@ class SyntheticSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
     (requires the ``pntx[embeddings]`` extra) for a more representative/
     diverse exemplar set.
 
-    ``temperature`` defaults to ``1.0`` (unlike ``t2pn.Classifier``, which
+    ``temperature`` defaults to ``1.0`` (unlike ``t2pn.LLMPromptingClassifier``, which
     defaults to ``0.0``) since generation benefits from varied output across
     batches, whereas classification should be as deterministic as possible.
 

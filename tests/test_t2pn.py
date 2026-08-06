@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import warnings
+from typing import Any
 
 import numpy as np
 import pytest
@@ -10,7 +12,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_is_fitted
 
 from pntx.selection import NearestSelector, RandomSelector
-from pntx.t2pn import Classifier
+from pntx.t2pn import LLMPromptingClassifier
 
 from .conftest import (
     SAMPLE_NEGATIVE,
@@ -28,13 +30,13 @@ def _fit_texts_and_labels() -> tuple[list[str], list[str]]:
 
 
 def test_fit_requires_matching_lengths() -> None:
-    clf = Classifier(backend=FakeBackend())
+    clf = LLMPromptingClassifier(backend=FakeBackend())
     with pytest.raises(ValueError, match="same length"):
         clf.fit(["a", "b"], ["positive"])
 
 
 def test_fit_requires_exactly_two_classes() -> None:
-    clf = Classifier(backend=FakeBackend())
+    clf = LLMPromptingClassifier(backend=FakeBackend())
     with pytest.raises(ValueError, match="exactly 2 classes"):
         clf.fit(["a", "b", "c"], ["positive", "positive", "positive"])
     with pytest.raises(ValueError, match="exactly 2 classes"):
@@ -44,14 +46,14 @@ def test_fit_requires_exactly_two_classes() -> None:
 def test_predict_before_fit_raises_not_fitted() -> None:
     from sklearn.exceptions import NotFittedError
 
-    clf = Classifier(backend=FakeBackend())
+    clf = LLMPromptingClassifier(backend=FakeBackend())
     with pytest.raises(NotFittedError):
         clf.predict(["some text"])
 
 
 def test_fit_groups_pools_by_label_and_check_is_fitted_passes() -> None:
     X, y = _fit_texts_and_labels()
-    clf = Classifier(backend=FakeBackend()).fit(X, y)
+    clf = LLMPromptingClassifier(backend=FakeBackend()).fit(X, y)
     check_is_fitted(clf, "classes_")
     assert sorted(clf.positive_) == sorted(SAMPLE_POSITIVE)
     assert sorted(clf.negative_) == sorted(SAMPLE_NEGATIVE)
@@ -61,7 +63,7 @@ def test_fit_groups_pools_by_label_and_check_is_fitted_passes() -> None:
 def test_fit_caches_exemplar_selection_and_calibration_for_static_selector() -> None:
     X, y = _fit_texts_and_labels()
     backend = FakeBatchBackend()
-    clf = Classifier(backend=backend).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend).fit(X, y)
     assert clf.exemplar_positive_ is not None
     assert clf.exemplar_negative_ is not None
     assert clf.exemplar_prefix_ is not None
@@ -73,7 +75,7 @@ def test_fit_caches_exemplar_selection_and_calibration_for_static_selector() -> 
 def test_fit_defers_exemplar_selection_for_dynamic_selector() -> None:
     X, y = _fit_texts_and_labels()
     backend = FakeBatchBackend()
-    clf = Classifier(backend=backend, selector=NearestSelector()).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend, selector=NearestSelector()).fit(X, y)
     assert clf.exemplar_positive_ is None
     assert clf.exemplar_negative_ is None
     assert clf.exemplar_prefix_ is None
@@ -84,7 +86,7 @@ def test_fit_defers_exemplar_selection_for_dynamic_selector() -> None:
 def test_fit_skips_calibration_call_when_calibrate_false() -> None:
     X, y = _fit_texts_and_labels()
     backend = FakeBackend()
-    clf = Classifier(backend=backend, calibrate=False).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend, calibrate=False).fit(X, y)
     assert clf.calibration_weights_ is None
     assert backend.score_calls == []
 
@@ -105,7 +107,7 @@ def test_predict_proba_content_free_calibration_corrects_label_bias() -> None:
             query_prompt: [0.0, 0.0],  # the query itself carries no signal either way
         }
     )
-    clf = Classifier(backend=backend).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend).fit(X, y)
 
     proba = clf.predict_proba(["neutral query"])
 
@@ -121,7 +123,7 @@ def test_predict_proba_calibrate_false_leaves_raw_softmax_uncorrected() -> None:
     prefix = "Text: pos text\nLabel: positive\n\nText: neg text\nLabel: negative\n\n"
     query_prompt = prefix + "Text: neutral query\nLabel:"
     backend = FakeBackend(choice_scores={query_prompt: [0.0, 0.0]})
-    clf = Classifier(backend=backend, calibrate=False).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend, calibrate=False).fit(X, y)
 
     proba = clf.predict_proba(["neutral query"])
 
@@ -142,7 +144,7 @@ def test_predict_proba_dynamic_selector_reselects_exemplars_per_item_and_warns()
 
     backend = FakeBatchBackend()
     selector = NearestSelector(similarity_fn=topic_similarity)
-    clf = Classifier(backend=backend, selector=selector, max_exemplars=1).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend, selector=selector, max_exemplars=1).fit(X, y)
 
     with pytest.warns(UserWarning, match="query-aware"):
         clf.predict_proba(["an APPLE query", "a HIKE query"])
@@ -164,7 +166,9 @@ def test_predict_proba_dynamic_selector_no_warning_without_batch_backend() -> No
     X = positive_texts + negative_texts
     y = ["positive"] * 2 + ["negative"] * 2
     backend = FakeBackend()  # ScoringBackend but not BatchScoringBackend
-    clf = Classifier(backend=backend, selector=NearestSelector(), max_exemplars=1).fit(X, y)
+    clf = LLMPromptingClassifier(
+        backend=backend, selector=NearestSelector(), max_exemplars=1
+    ).fit(X, y)
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
@@ -179,7 +183,7 @@ def test_predict_proba_scoring_backend_path(y_positive: object, y_negative: obje
     X = SAMPLE_POSITIVE + SAMPLE_NEGATIVE
     y = [y_positive] * len(SAMPLE_POSITIVE) + [y_negative] * len(SAMPLE_NEGATIVE)
     backend = FakeBatchBackend()
-    clf = Classifier(backend=backend, selector=RandomSelector(seed=0)).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend, selector=RandomSelector(seed=0)).fit(X, y)
 
     proba = clf.predict_proba(["a new query"])
     assert proba.shape == (1, 2)
@@ -193,7 +197,7 @@ def test_predict_proba_scoring_backend_path(y_positive: object, y_negative: obje
 def test_predict_proba_scoring_backend_uses_batch_scoring_when_available() -> None:
     X, y = _fit_texts_and_labels()
     backend = FakeBatchBackend()
-    clf = Classifier(backend=backend, selector=RandomSelector(seed=0)).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend, selector=RandomSelector(seed=0)).fit(X, y)
     proba = clf.predict_proba(["q1", "q2", "q3"])
     assert proba.shape == (3, 2)
     assert len(backend.batch_calls) == 1
@@ -206,7 +210,7 @@ def test_predict_proba_balances_unequal_pool_sizes() -> None:
     X = positive_texts + negative_texts
     y = ["positive"] * len(positive_texts) + ["negative"] * len(negative_texts)
     backend = FakeBatchBackend()
-    clf = Classifier(backend=backend).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend).fit(X, y)
 
     clf.predict_proba(["query"])
 
@@ -222,7 +226,7 @@ def test_predict_proba_trims_exemplars_to_fit_context_limit() -> None:
     X = positive_texts + negative_texts
     y = ["positive"] * len(positive_texts) + ["negative"] * len(negative_texts)
     backend = FakeBatchBackend()
-    clf = Classifier(backend=backend, context_limit=600).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend, context_limit=600).fit(X, y)
 
     clf.predict_proba(["query"])
 
@@ -238,7 +242,7 @@ def test_fit_raises_when_context_limit_too_small_for_reserve_static_selector() -
     X, y = _fit_texts_and_labels()
     backend = FakeBatchBackend()
     with pytest.raises(ValueError, match="context_limit"):
-        Classifier(backend=backend, context_limit=1).fit(X, y)
+        LLMPromptingClassifier(backend=backend, context_limit=1).fit(X, y)
 
 
 def test_predict_proba_raises_when_context_limit_too_small_for_reserve_dynamic_selector() -> None:
@@ -246,7 +250,9 @@ def test_predict_proba_raises_when_context_limit_too_small_for_reserve_dynamic_s
     # budget check stays deferred to predict_proba, sized from that call's X.
     X, y = _fit_texts_and_labels()
     backend = FakeBatchBackend()
-    clf = Classifier(backend=backend, selector=NearestSelector(), context_limit=1).fit(X, y)
+    clf = LLMPromptingClassifier(
+        backend=backend, selector=NearestSelector(), context_limit=1
+    ).fit(X, y)
     with pytest.raises(ValueError, match="context_limit"):
         clf.predict_proba(["some reasonably long query text"])
 
@@ -254,7 +260,7 @@ def test_predict_proba_raises_when_context_limit_too_small_for_reserve_dynamic_s
 def test_predict_proba_falls_back_to_per_item_scoring_without_batch_backend() -> None:
     X, y = _fit_texts_and_labels()
     backend = FakeBackend()  # ScoringBackend but not BatchScoringBackend
-    clf = Classifier(backend=backend).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend).fit(X, y)
     proba = clf.predict_proba(["q1", "q2"])
     assert proba.shape == (2, 2)
     # 1 content-free calibration call in fit() + 1 score_choices call per item (2 items).
@@ -266,7 +272,7 @@ def test_predict_proba_falls_back_to_per_item_scoring_without_batch_backend_no_c
 ):
     X, y = _fit_texts_and_labels()
     backend = FakeBackend()  # ScoringBackend but not BatchScoringBackend
-    clf = Classifier(backend=backend, calibrate=False).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend, calibrate=False).fit(X, y)
     proba = clf.predict_proba(["q1", "q2"])
     assert proba.shape == (2, 2)
     assert len(backend.score_calls) == 2  # one score_choices call per item, no calibration call
@@ -275,7 +281,7 @@ def test_predict_proba_falls_back_to_per_item_scoring_without_batch_backend_no_c
 def test_predict_proba_parse_fallback_path_for_non_scoring_backend() -> None:
     X, y = _fit_texts_and_labels()
     backend = CompleteOnlyBackend(complete_responses=["The label is positive.", "negative"])
-    clf = Classifier(backend=backend).fit(X, y)
+    clf = LLMPromptingClassifier(backend=backend).fit(X, y)
     pred = clf.predict(["q1", "q2"])
     assert list(pred) == ["positive", "negative"]
     assert len(backend.complete_calls) == 2  # no BatchBackend => one complete() call per item
@@ -283,14 +289,14 @@ def test_predict_proba_parse_fallback_path_for_non_scoring_backend() -> None:
 
 def test_predict_proba_empty_input_returns_empty_array() -> None:
     X, y = _fit_texts_and_labels()
-    clf = Classifier(backend=FakeBackend()).fit(X, y)
+    clf = LLMPromptingClassifier(backend=FakeBackend()).fit(X, y)
     proba = clf.predict_proba([])
     assert proba.shape == (0, 2)
 
 
 def test_get_params_excludes_nothing_and_backend_kwargs_is_a_single_param() -> None:
     backend = FakeBackend()
-    clf = Classifier(backend=backend, backend_kwargs=None, max_exemplars=5)
+    clf = LLMPromptingClassifier(backend=backend, backend_kwargs=None, max_exemplars=5)
     params = clf.get_params()
     assert params["backend"] is backend
     assert params["backend_kwargs"] is None
@@ -299,7 +305,7 @@ def test_get_params_excludes_nothing_and_backend_kwargs_is_a_single_param() -> N
 
 def test_clone_reuses_the_same_backend_instance_without_deepcopy() -> None:
     backend = FakeBackend()
-    clf = Classifier(backend=backend)
+    clf = LLMPromptingClassifier(backend=backend)
     cloned = clone(clf)
     assert cloned.backend is backend
     assert cloned is not clf
@@ -308,6 +314,42 @@ def test_clone_reuses_the_same_backend_instance_without_deepcopy() -> None:
 def test_sklearn_pipeline_and_cross_val_score() -> None:
     X, y = _fit_texts_and_labels()
     backend = FakeBatchBackend()
-    pipe = Pipeline([("clf", Classifier(backend=backend, selector=RandomSelector(seed=0)))])
+    pipe = Pipeline(
+        [("clf", LLMPromptingClassifier(backend=backend, selector=RandomSelector(seed=0)))]
+    )
     scores = cross_val_score(pipe, X, y, cv=2)
     assert len(scores) == 2
+
+
+def test_save_load_roundtrip_excludes_backend_and_restores_state(tmp_path: Any) -> None:
+    X, y = _fit_texts_and_labels()
+    backend = FakeBatchBackend()
+    clf = LLMPromptingClassifier(backend=backend, selector=RandomSelector(seed=0)).fit(X, y)
+
+    path = tmp_path / "classifier.json"
+    clf.save(path)
+
+    with open(path) as f:
+        saved = json.load(f)
+    assert "backend" not in saved
+    assert "backend_" not in saved
+
+    other_backend = FakeBatchBackend()
+    loaded = LLMPromptingClassifier.load(path, backend=other_backend)
+    assert loaded.backend is other_backend
+    assert sorted(loaded.positive_) == sorted(clf.positive_)
+    assert sorted(loaded.negative_) == sorted(clf.negative_)
+    assert list(loaded.classes_) == list(clf.classes_)
+    assert loaded.exemplar_prefix_ == clf.exemplar_prefix_
+    assert loaded.calibration_weights_ == clf.calibration_weights_
+
+    proba = loaded.predict_proba(["a new query"])
+    assert proba.shape == (1, 2)
+
+
+def test_save_before_fit_raises_not_fitted() -> None:
+    from sklearn.exceptions import NotFittedError
+
+    clf = LLMPromptingClassifier(backend=FakeBackend())
+    with pytest.raises(NotFittedError):
+        clf.save("unused.json")

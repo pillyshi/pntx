@@ -1,6 +1,6 @@
 """t2pn (text -> positive/negative) classification benchmark, llama.cpp only.
 
-Fits a t2pn.Classifier on sampled Jigsaw/Civil Comments positive/negative
+Fits a t2pn.LLMPromptingClassifier on sampled Jigsaw/Civil Comments positive/negative
 pools, runs predict/predict_proba over a held-out eval set, and reports
 accuracy/F1/latency.
 
@@ -25,7 +25,7 @@ import numpy as np
 
 from benchmarks import jigsaw, metrics
 from pntx.selection import DiversitySelector, NearestSelector, RandomSelector, Selector
-from pntx.t2pn import Classifier
+from pntx.t2pn import LLMPromptingClassifier
 
 _SELECTORS: dict[str, type[Selector]] = {
     "random": RandomSelector,
@@ -93,7 +93,7 @@ def main(argv: list[str] | None = None) -> None:
         f"and {len(eval_set)} eval texts."
     )
 
-    clf = Classifier(
+    clf = LLMPromptingClassifier(
         backend="llama",
         backend_kwargs={
             "model_path": args.model_path,

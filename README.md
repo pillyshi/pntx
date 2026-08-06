@@ -3,9 +3,11 @@
 `pntx` is a Python library that turns user-supplied `positive`/`negative` text pools
 into two independent components:
 
-1. **`pntx.t2pn.Classifier`** (text → positive/negative) — a
-   [scikit-learn](https://scikit-learn.org/) `Classifier`: label arbitrary text as
-   `positive` or `negative`.
+1. **`pntx.t2pn`** (text → positive/negative) — a family of
+   [scikit-learn](https://scikit-learn.org/) `Classifier`s that label arbitrary text as
+   `positive` or `negative`: **`LLMPromptingClassifier`** classifies via LLM few-shot
+   prompting/scoring (no training), and **`FineTuningClassifier`** actually fine-tunes a
+   pretrained `transformers` encoder (default: multilingual BERT).
 2. **`pntx.pn2t`** (positive/negative → text) — two
    [imbalanced-learn](https://imbalanced-learn.org/)-style oversamplers with different
    goals: **`OverSampler`** generates "hard positive" text to balance an imbalanced
@@ -18,11 +20,11 @@ you define with examples. `pntx` never interprets the pools; it only uses them a
 few-shot and scoring material.
 
 ```python
-from pntx.t2pn import Classifier
+from pntx.t2pn import LLMPromptingClassifier
 from pntx.pn2t import OverSampler
 
-# --- t2pn: classification (a scikit-learn Classifier) ---
-clf = Classifier(backend="llama", backend_kwargs={"model_path": "model.gguf"})
+# --- t2pn: classification via LLM few-shot prompting (no training) ---
+clf = LLMPromptingClassifier(backend="llama", backend_kwargs={"model_path": "model.gguf"})
 
 X = ["The movie was fantastic", "Support was quick and helpful",
      "The movie was boring", "Support was slow and unhelpful"]
@@ -35,6 +37,20 @@ clf.predict_proba(["The staff were incredibly friendly"])  # shape (1, 2), colum
 # drops straight into the scikit-learn ecosystem
 from sklearn.model_selection import cross_val_score
 cross_val_score(clf, X, y, cv=5)
+
+# persist the fitted pools (not the backend -- pass a fresh one back in on load)
+clf.save("classifier.json")
+loaded = LLMPromptingClassifier.load("classifier.json", backend="llama",
+                                     backend_kwargs={"model_path": "model.gguf"})
+
+# --- t2pn: classification via fine-tuning a pretrained encoder (pntx[finetuning]) ---
+from pntx.t2pn import FineTuningClassifier
+
+ft_clf = FineTuningClassifier()  # default model_name is multilingual BERT
+ft_clf.fit(X, y)                 # this one actually trains
+ft_clf.predict_proba(["The staff were incredibly friendly"])
+ft_clf.save("finetuned/")        # persists the trained weights, not just pooled text
+loaded_ft = FineTuningClassifier.load("finetuned/")
 
 # --- pn2t: generation (an imbalanced-learn-style OverSampler) ---
 sampler = OverSampler(backend="llama", backend_kwargs={"model_path": "model.gguf"})
@@ -57,7 +73,7 @@ positive but that shallow classifiers or untrained humans might mislabel negativ
 first asking the backend to analyze what distinguishes the two classes. It's a full
 port of [`semaxis`](https://github.com/pillyshi/semaxis)'s `HardPositiveOverSampler`,
 routed through `pntx`'s own `Backend` abstraction so it can share a loaded model with
-`Classifier` instead of loading its own. v1 only generates the positive side and
+`LLMPromptingClassifier` instead of loading its own. v1 only generates the positive side and
 supports binary `{0, 1}` labels; `imbalanced-learn` itself isn't required (`fit_resample`
 is duck-typed, so `imblearn.pipeline.Pipeline` still works if it's installed
 separately).
@@ -79,20 +95,23 @@ copy-through leaks but not paraphrased ones, so it's not a privacy guarantee.
 `pntx` uses [uv](https://docs.astral.sh/uv/) for package management.
 
 ```bash
-uv add pntx               # core (scikit-learn + pydantic)
-uv add "pntx[llama]"      # + llama.cpp in-process backend
-uv add "pntx[embeddings]" # + semantic similarity for selectors
+uv add pntx                # core (scikit-learn + pydantic)
+uv add "pntx[llama]"       # + llama.cpp in-process backend
+uv add "pntx[finetuning]"  # + FineTuningClassifier (transformers + torch)
+uv add "pntx[embeddings]"  # + semantic similarity for selectors
 ```
 
-`scikit-learn` and `pydantic` are core dependencies (`Classifier`'s scikit-learn
-contract and `OverSampler`'s structured LLM output need them respectively). Each
-backend/feature otherwise lives behind its own extra, and using one without installing
-it raises a clear `ImportError` with the install command to run.
+`scikit-learn` and `pydantic` are core dependencies (every `t2pn` classifier's
+scikit-learn contract and `OverSampler`'s structured LLM output need them
+respectively). Each backend/feature otherwise lives behind its own extra, and using
+one without installing it raises a clear `ImportError` with the install command to run.
 
 ## Backends
 
-`pntx` runs models via a `Backend` protocol, shared by `Classifier`, `OverSampler`, and
-`SyntheticSampler`:
+`pntx` runs models via a `Backend` protocol, shared by `LLMPromptingClassifier`,
+`OverSampler`, and `SyntheticSampler`. `FineTuningClassifier` does **not** use this
+abstraction at all -- it has no LLM calls, only a fine-tuned `transformers` encoder, so
+there's no loaded model to share with the others:
 
 - **`LlamaCppBackend`** (`pntx[llama]`) — runs a GGUF model in-process via
   `llama-cpp-python`. This is the primary, most-tuned backend: classification uses
@@ -101,11 +120,11 @@ it raises a clear `ImportError` with the install command to run.
   re-evaluating it per item.
 
 ```python
-clf = Classifier(backend="llama", backend_kwargs={"model_path": "model.gguf"})
+clf = LLMPromptingClassifier(backend="llama", backend_kwargs={"model_path": "model.gguf"})
 
 # or pass a backend instance directly, e.g. for dependency injection in tests
 from pntx.backends.llama import LlamaCppBackend
-clf = Classifier(backend=LlamaCppBackend(model_path="model.gguf"))
+clf = LLMPromptingClassifier(backend=LlamaCppBackend(model_path="model.gguf"))
 ```
 
 A remote API backend can be added later by implementing the `Backend` protocol
@@ -113,7 +132,7 @@ A remote API backend can be added later by implementing the `Backend` protocol
 ships right now.
 
 `backend_kwargs` is only used when `backend` is given as a string; it's a single dict
-(rather than `**kwargs`) so `Classifier`/`OverSampler`/`SyntheticSampler` stay compatible
+(rather than `**kwargs`) so `LLMPromptingClassifier`/`OverSampler`/`SyntheticSampler` stay compatible
 with scikit-learn's `get_params()`/`clone()`.
 
 `LlamaCppBackend` accepts either a local `model_path` or a `repo_id` (optionally
@@ -122,7 +141,7 @@ via `Llama.from_pretrained`. Any other keyword — `n_ctx`, `n_gpu_layers`,
 `flash_attn`, `verbose`, ... — is forwarded as-is to `llama_cpp.Llama`:
 
 ```python
-clf = Classifier(
+clf = LLMPromptingClassifier(
     backend="llama",
     backend_kwargs={
         "repo_id": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
@@ -134,7 +153,7 @@ clf = Classifier(
 )
 ```
 
-To share one loaded model across `Classifier`, `OverSampler`, and `SyntheticSampler`
+To share one loaded model across `LLMPromptingClassifier`, `OverSampler`, and `SyntheticSampler`
 (recommended for local inference — avoids loading the same GGUF twice), construct the
 backend once and pass the instance to each:
 
@@ -142,7 +161,7 @@ backend once and pass the instance to each:
 from pntx.backends.llama import LlamaCppBackend
 
 backend = LlamaCppBackend(model_path="model.gguf")
-clf = Classifier(backend=backend)
+clf = LLMPromptingClassifier(backend=backend)
 sampler = OverSampler(backend=backend)
 synth = SyntheticSampler(backend=backend, n_synthesized=10)
 ```
@@ -150,7 +169,7 @@ synth = SyntheticSampler(backend=backend, n_synthesized=10)
 ## Selecting exemplars
 
 When there are more fitted texts (on either side) than comfortably fit in a prompt, a
-`Selector` decides which ones to use — `Classifier` calls it independently for the
+`Selector` decides which ones to use — `LLMPromptingClassifier` calls it independently for the
 positive and negative pools:
 
 - **`RandomSelector`** (default) — a uniform random subset.
@@ -166,13 +185,15 @@ dependency-free character n-gram similarity (`pntx.dedup.similarity`); pass
 similarity instead:
 
 ```python
-from pntx.t2pn import Classifier
+from pntx.t2pn import LLMPromptingClassifier
 from pntx.selection import NearestSelector
 
-clf = Classifier(backend="llama", backend_kwargs={"model_path": "model.gguf"}, selector=NearestSelector())
+clf = LLMPromptingClassifier(
+    backend="llama", backend_kwargs={"model_path": "model.gguf"}, selector=NearestSelector()
+)
 ```
 
-`Classifier` treats a selector as **static** or **dynamic** based on its
+`LLMPromptingClassifier` treats a selector as **static** or **dynamic** based on its
 `query_aware` attribute (`RandomSelector`/`DiversitySelector`/`BudgetSelector` are
 static; `NearestSelector` is the only built-in dynamic one):
 
@@ -185,15 +206,15 @@ static; `NearestSelector` is the only built-in dynamic one):
   can't be known ahead of time, so selection reruns per text inside
   `predict`/`predict_proba` instead. For a `BatchScoringBackend` this forfeits the
   shared-prefix KV-cache reuse above (each text gets its own prefix and its own
-  backend call), and `Classifier` raises a `UserWarning` once per call to flag the
+  backend call), and `LLMPromptingClassifier` raises a `UserWarning` once per call to flag the
   latency trade-off.
 
-`Classifier` also applies **content-free calibration** (Zhao et al. 2021, "Calibrate
+`LLMPromptingClassifier` also applies **content-free calibration** (Zhao et al. 2021, "Calibrate
 Before Use") by default on the `ScoringBackend` path: it scores an empty placeholder
 query against the same few-shot prefix to estimate the prefix's own label bias (an
 artifact of which exemplars ended up in it and in what order — few-shot prompts are
 known to be sensitive to this), then divides each real prediction by that baseline and
-renormalizes. Pass `Classifier(..., calibrate=False)` to disable it and get the raw,
+renormalizes. Pass `LLMPromptingClassifier(..., calibrate=False)` to disable it and get the raw,
 uncalibrated softmax instead.
 
 `OverSampler` and `SyntheticSampler` don't take a `Selector`; instead their

@@ -2060,7 +2060,7 @@ wheels = [
 
 [[package]]
 name = "pntx"
-version = "0.10.0"
+version = "0.11.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
@@ -2071,6 +2071,10 @@ dependencies = [
 [package.optional-dependencies]
 embeddings = [
     { name = "sentence-transformers" },
+]
+finetuning = [
+    { name = "torch" },
+    { name = "transformers" },
 ]
 llama = [
     { name = "llama-cpp-python" },
@@ -2093,8 +2097,10 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2" },
     { name = "scikit-learn", specifier = ">=1.6" },
     { name = "sentence-transformers", marker = "extra == 'embeddings'" },
+    { name = "torch", marker = "extra == 'finetuning'" },
+    { name = "transformers", marker = "extra == 'finetuning'" },
 ]
-provides-extras = ["llama", "embeddings"]
+provides-extras = ["llama", "finetuning", "embeddings"]
 
 [package.metadata.requires-dev]
 benchmark = [{ name = "datasets" }]

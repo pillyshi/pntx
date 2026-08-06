@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+import os
 import random
 import warnings
 from collections.abc import Callable, Iterable
@@ -11,17 +13,17 @@ from numpy.typing import NDArray
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.utils.validation import check_is_fitted
 
-from . import prompts
-from ._backend_resolve import resolve_backend
-from ._sklearn import LLMEstimatorMixin
-from .backends.base import Backend, BatchBackend, BatchScoringBackend, ScoringBackend
-from .selection import BudgetSelector, Selector, _trim_to_budget, default_tokenizer
-from .types import NEGATIVE, POSITIVE
+from .. import prompts
+from .._backend_resolve import resolve_backend
+from .._sklearn import LLMEstimatorMixin
+from ..backends.base import Backend, BatchBackend, BatchScoringBackend, ScoringBackend
+from ..selection import BudgetSelector, Selector, _trim_to_budget, default_tokenizer
+from ..types import NEGATIVE, POSITIVE
 
-__all__ = ["Classifier"]
+__all__ = ["LLMPromptingClassifier"]
 
 
-class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ignore[misc]
+class LLMPromptingClassifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ignore[misc]
     """scikit-learn ``ClassifierMixin`` that labels text against user-defined
     positive/negative example pools (text → positive/negative, "t2pn").
 
@@ -48,7 +50,7 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
     (``ScoringBackend`` path) or the completion response (fallback path)
     plus the longest text the exemplar block needs to leave room for --
     unlike ``pn2t``'s samplers, which reserve a fixed ``max_tokens`` for an
-    LLM response of unknown length, ``Classifier`` can size this
+    LLM response of unknown length, ``LLMPromptingClassifier`` can size this
     exactly instead of conservatively. After budget-fitting, the larger
     class is randomly trimmed down to the smaller class's count, so
     positive and negative are represented equally in the few-shot prompt
@@ -117,7 +119,7 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         """``backend`` is either a ready-made ``Backend`` instance, or the name
         of a built-in backend (e.g. ``"llama"``) to construct lazily from
         ``backend_kwargs`` (e.g.
-        ``Classifier(backend="llama", backend_kwargs={"model_path": "model.gguf"})``).
+        ``LLMPromptingClassifier(backend="llama", backend_kwargs={"model_path": "model.gguf"})``).
 
         ``backend_kwargs`` is a single dict rather than ``**kwargs`` so this
         estimator stays compatible with scikit-learn's ``get_params()``/
@@ -157,7 +159,7 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
         self.temperature = temperature
         self.calibrate = calibrate
 
-    def fit(self, X: Iterable[str], y: Iterable[Any]) -> Classifier:
+    def fit(self, X: Iterable[str], y: Iterable[Any]) -> LLMPromptingClassifier:
         """Store the ``X`` texts, grouped by ``y`` into two independent pools.
 
         No parameter learning happens here (mirrors the pntx-wide convention
@@ -210,6 +212,59 @@ class Classifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):  # type: ig
                 )
                 self.calibration_weights_ = _label_probs_from_scores(content_free_scores)
         return self
+
+    def save(self, path: str | os.PathLike[str]) -> None:
+        """Save fitted state to a JSON file.
+
+        ``backend`` is not included -- pass it back in via :meth:`load`'s
+        ``backend`` argument, the same convention ``pn2t.OverSampler``/
+        ``pn2t.SyntheticSampler`` use, since a loaded backend (e.g.
+        ``LlamaCppBackend``) isn't safely serializable and shouldn't be
+        written out on every save.
+
+        Args:
+            path: Destination file path.
+        """
+        check_is_fitted(self, "classes_")
+        state = {
+            "classes_": self.classes_.tolist(),
+            "positive_": self.positive_,
+            "negative_": self.negative_,
+            "exemplar_positive_": self.exemplar_positive_,
+            "exemplar_negative_": self.exemplar_negative_,
+            "exemplar_prefix_": self.exemplar_prefix_,
+            "calibration_weights_": self.calibration_weights_,
+        }
+        with open(path, "w") as f:
+            json.dump(state, f)
+
+    @classmethod
+    def load(
+        cls, path: str | os.PathLike[str], backend: Backend | str, **kwargs: Any
+    ) -> LLMPromptingClassifier:
+        """Load fitted state from a JSON file.
+
+        Args:
+            path: Path to the JSON file written by :meth:`save`.
+            backend: Backend instance or name (must be re-supplied; not stored in the file).
+            **kwargs: Additional init parameters (e.g. ``selector``, ``context_limit``).
+
+        Returns:
+            A fitted :class:`LLMPromptingClassifier` instance with restored pools and
+            (if resolved statically) exemplar selection/calibration.
+        """
+        with open(path) as f:
+            data = json.load(f)
+        obj = cls(backend=backend, **kwargs)
+        obj.classes_ = np.array(data["classes_"])
+        obj.positive_ = data["positive_"]
+        obj.negative_ = data["negative_"]
+        obj.backend_ = resolve_backend(obj.backend, obj.backend_kwargs)
+        obj.exemplar_positive_ = data["exemplar_positive_"]
+        obj.exemplar_negative_ = data["exemplar_negative_"]
+        obj.exemplar_prefix_ = data["exemplar_prefix_"]
+        obj.calibration_weights_ = data["calibration_weights_"]
+        return obj
 
     def predict(self, X: Iterable[str]) -> NDArray[Any]:
         """Predict the most likely class (from ``classes_``) for each text in ``X``."""

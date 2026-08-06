@@ -20,7 +20,7 @@ def default_tokenizer(text: str) -> int:
     """Rough token-count fallback for backends without ``count_tokens``
     (e.g. ``LlamaCppBackend`` has one; other backends may not).
 
-    Shared by every budget-aware sampler in the package (``t2pn.Classifier``,
+    Shared by every budget-aware sampler in the package (``t2pn.LLMPromptingClassifier``,
     ``pn2t.OverSampler``, ``pn2t.SyntheticSampler``) so they all fall back to
     the same estimate.
     """
@@ -40,7 +40,7 @@ class Selector(Protocol):
     ``query_aware`` is an optional class attribute (not part of the required
     structural contract, so existing minimal duck-typed implementations don't
     break) that callers can use to detect whether a selector's output
-    actually depends on ``query`` -- e.g. ``t2pn.Classifier`` uses
+    actually depends on ``query`` -- e.g. ``t2pn.LLMPromptingClassifier`` uses
     ``getattr(selector, "query_aware", False)`` to decide whether it must
     reselect exemplars per text being classified (losing shared-prefix
     batching in the process) instead of once per ``predict``/``predict_proba``
@@ -114,7 +114,7 @@ class BudgetSelector:
     constraint here, and the whole point is to keep prompts within it even
     when every text in the pool would otherwise be included. ``k`` still
     acts as a secondary cap on top of the budget (e.g. from
-    ``t2pn.Classifier(max_exemplars=...)``); ``query`` is ignored.
+    ``t2pn.LLMPromptingClassifier(max_exemplars=...)``); ``query`` is ignored.
 
     ``tokenizer_fn`` should match whatever backend is doing the actual
     tokenizing (e.g. ``LlamaCppBackend.count_tokens``), so the budget
