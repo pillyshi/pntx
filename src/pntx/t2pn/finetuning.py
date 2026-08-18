@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 from collections.abc import Iterable
 from typing import Any
 
@@ -127,10 +128,19 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         loss_fn = torch.nn.CrossEntropyLoss(weight=self._resolve_class_weight(classes, target_ids))
 
         self.model_.train()
+        shuffle_rng = random.Random(self.seed)
+        indices = list(range(len(texts)))
         for _ in range(self.epochs):
-            for start in range(0, len(texts), self.batch_size):
-                batch_texts = texts[start : start + self.batch_size]
-                batch_targets = target_ids[start : start + self.batch_size]
+            # Reshuffle every epoch so batches mix classes throughout training.
+            # Without this, callers that append same-label examples in a block
+            # (e.g. pn2t.OverSampler appends generated hard positives to the
+            # tail of X) end training on a run of batches skewed toward one
+            # class, biasing the model via recency rather than genuine signal.
+            shuffle_rng.shuffle(indices)
+            for start in range(0, len(indices), self.batch_size):
+                batch_idx = indices[start : start + self.batch_size]
+                batch_texts = [texts[i] for i in batch_idx]
+                batch_targets = [target_ids[i] for i in batch_idx]
                 encoded = self.tokenizer_(
                     batch_texts,
                     padding=True,
