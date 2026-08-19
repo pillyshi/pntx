@@ -15,6 +15,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from .. import prompts
 from .._backend_resolve import resolve_backend
+from .._labels import resolve_binary_labels
 from .._sklearn import LLMEstimatorMixin
 from ..backends.base import Backend, BatchBackend, BatchScoringBackend, ScoringBackend
 from ..selection import BudgetSelector, Selector, _trim_to_budget, default_tokenizer
@@ -34,12 +35,14 @@ class LLMPromptingClassifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):
     need to be aligned pairs beyond the usual per-sample correspondence.
     Exactly two classes must be present in ``y``.
 
-    ``y`` may be any two hashable, orderable values (e.g. ``0``/``1``,
-    ``-1``/``1``, or ``"positive"``/``"negative"``); by scikit-learn's
-    binary-classification convention, the greater of the two
-    (``classes_[1]``, e.g. ``1`` or ``"positive"``) is treated as the
-    prompt's "positive" role and the lesser (``classes_[0]``) as "negative".
-    ``predict_proba``'s columns follow ``classes_`` order.
+    ``y`` may be any two distinct hashable values; which one means
+    "positive" is resolved by ``pntx._labels.resolve_binary_labels`` (see
+    the ``pos_label`` parameter below): a numeric pair (e.g. ``0``/``1``,
+    ``-1``/``1``) resolves to its greater value, the exact pair
+    ``"positive"``/``"negative"`` resolves directly, and anything else
+    requires ``pos_label``. ``classes_`` is ``[negative_label,
+    positive_label]`` in that order, and ``predict_proba``'s columns follow
+    it.
 
     ``context_limit`` is the token budget for the *whole* per-call prompt
     (the few-shot exemplar block plus that call's query text and label
@@ -115,6 +118,7 @@ class LLMPromptingClassifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):
         context_limit: int = 100_000,
         temperature: float = 0.0,
         calibrate: bool = True,
+        pos_label: Any = None,
     ) -> None:
         """``backend`` is either a ready-made ``Backend`` instance, or the name
         of a built-in backend (e.g. ``"llama"``) to construct lazily from
@@ -150,6 +154,13 @@ class LLMPromptingClassifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):
         ``False`` to get the raw, uncalibrated softmax over label
         log-likelihoods instead (e.g. to compare against pre-calibration
         behavior, or to skip the extra ``score_choices`` call it costs).
+
+        ``pos_label`` says which of the two values in ``fit``'s ``y`` means
+        "positive"; ``None`` (default) auto-resolves it (numeric: greater
+        value; ``"positive"``/``"negative"``: used directly) and raises
+        ``ValueError`` if ``y``'s two values don't fit either rule. Pass it
+        explicitly for anything else (e.g. ``pos_label="spam"`` for
+        ``y`` in ``{"spam", "ham"}``).
         """
         self.backend = backend
         self.backend_kwargs = backend_kwargs
@@ -158,6 +169,7 @@ class LLMPromptingClassifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):
         self.context_limit = context_limit
         self.temperature = temperature
         self.calibrate = calibrate
+        self.pos_label = pos_label
 
     def fit(self, X: Iterable[str], y: Iterable[Any]) -> LLMPromptingClassifier:
         """Store the ``X`` texts, grouped by ``y`` into two independent pools.
@@ -181,13 +193,15 @@ class LLMPromptingClassifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):
             raise ValueError(
                 f"X and y must have the same length, got len(X)={len(X)} and len(y)={len(y)}"
             )
-        classes = sorted(set(y))
-        if len(classes) != 2:
-            raise ValueError(f"y must contain exactly 2 classes, got {len(classes)}: {classes}")
+        negative_label, positive_label = resolve_binary_labels(y, pos_label=self.pos_label)
 
-        self.classes_ = np.array(classes)
-        self.positive_ = [text for text, label in zip(X, y, strict=True) if label == classes[1]]
-        self.negative_ = [text for text, label in zip(X, y, strict=True) if label == classes[0]]
+        self.classes_ = np.array([negative_label, positive_label])
+        self.positive_ = [
+            text for text, label in zip(X, y, strict=True) if label == positive_label
+        ]
+        self.negative_ = [
+            text for text, label in zip(X, y, strict=True) if label == negative_label
+        ]
         self.backend_ = resolve_backend(self.backend, self.backend_kwargs)
 
         self.exemplar_positive_: list[str] | None = None

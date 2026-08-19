@@ -33,19 +33,41 @@ def _pools() -> tuple[list[str], list[int]]:
     return X, y
 
 
-def test_fit_resample_requires_binary_labels() -> None:
+def test_fit_resample_requires_exactly_two_classes() -> None:
     X, _ = _pools()
     sampler = SyntheticSampler(backend=FakeBackend(), n_synthesized=1)
-    with pytest.raises(ValueError, match="binary labels"):
-        sampler.fit_resample(X, ["positive"] * len(X))
-
-
-def test_fit_resample_requires_at_least_one_of_each_class() -> None:
-    sampler = SyntheticSampler(backend=FakeBackend(), n_synthesized=1)
-    with pytest.raises(ValueError, match="at least one positive"):
+    with pytest.raises(ValueError, match="exactly 2 classes"):
+        sampler.fit_resample(X, (["a", "b", "c"] * (len(X) // 3 + 1))[: len(X)])
+    with pytest.raises(ValueError, match="exactly 2 classes"):
         sampler.fit_resample(["a", "b"], [0, 0])
-    with pytest.raises(ValueError, match="at least one negative"):
+    with pytest.raises(ValueError, match="exactly 2 classes"):
         sampler.fit_resample(["a", "b"], [1, 1])
+
+
+def test_fit_resample_accepts_alternate_binary_label_encodings() -> None:
+    X = SAMPLE_POSITIVE + SAMPLE_NEGATIVE
+    y = [1] * len(SAMPLE_POSITIVE) + [-1] * len(SAMPLE_NEGATIVE)
+    backend = FakeBackend(complete_responses=[_canned([_st("new synthetic text")])])
+    sampler = SyntheticSampler(backend=backend, n_synthesized=1, batch_size=1)
+    X_aug, y_aug = sampler.fit_resample(X, y)
+    assert X_aug[len(X) :] == ["new synthetic text"]
+    assert y_aug[len(X) :] == [1]
+
+
+def test_fit_resample_requires_pos_label_for_ambiguous_string_labels() -> None:
+    X = SAMPLE_POSITIVE + SAMPLE_NEGATIVE
+    y = ["spam"] * len(SAMPLE_POSITIVE) + ["ham"] * len(SAMPLE_NEGATIVE)
+    sampler = SyntheticSampler(backend=FakeBackend(), n_synthesized=1)
+    with pytest.raises(ValueError, match="pass pos_label"):
+        sampler.fit_resample(X, y)
+
+    backend = FakeBackend(complete_responses=[_canned([_st("new synthetic text")])])
+    sampler = SyntheticSampler(
+        backend=backend, n_synthesized=1, batch_size=1, pos_label="spam"
+    )
+    X_aug, y_aug = sampler.fit_resample(X, y)
+    assert X_aug[len(X) :] == ["new synthetic text"]
+    assert y_aug[len(X) :] == ["spam"]
 
 
 def test_fit_resample_requires_matching_lengths() -> None:

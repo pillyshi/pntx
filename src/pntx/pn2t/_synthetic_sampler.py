@@ -12,6 +12,7 @@ from sklearn.base import BaseEstimator
 
 from .. import dedup
 from .._backend_resolve import resolve_backend
+from .._labels import resolve_binary_labels
 from .._sklearn import LLMEstimatorMixin
 from ..backends.base import Backend
 from ..selection import _SAMPLE_METHODS, default_tokenizer, sample_group
@@ -50,8 +51,11 @@ class SyntheticSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
     validation; it is never included in the generation prompt, since showing
     negatives would frame generation around the positive/negative boundary,
     which is exactly what this class must avoid (see the algorithm notes
-    below). Only binary labels (``0``/``1``) are supported, and only the
-    positive (``1``) side is generated.
+    below). Only binary ``y`` is supported, and only the positive side is
+    generated. Which of the two values in ``y`` means "positive" is
+    resolved by ``pntx._labels.resolve_binary_labels`` (see the
+    ``pos_label`` parameter below) -- the same rule ``OverSampler``/
+    ``t2pn.LLMPromptingClassifier``/``t2pn.FineTuningClassifier`` use.
 
     Anonymity is a best-effort property of the prompt plus a lightweight
     verbatim-substring filter (``min_verbatim_span``); this is a heuristic,
@@ -116,7 +120,14 @@ class SyntheticSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         temperature: float = 1.0,
         verbose: bool = False,
         logger: _Logger | None = None,
+        pos_label: Any = None,
     ) -> None:
+        """``pos_label`` says which of the two values in ``fit_resample``'s
+        ``y`` means "positive"; ``None`` (default) auto-resolves it
+        (numeric: greater value; ``"positive"``/``"negative"``: used
+        directly) and raises ``ValueError`` if ``y``'s two values don't fit
+        either rule. See ``pntx._labels.resolve_binary_labels``.
+        """
         self.backend = backend
         self.n_synthesized = n_synthesized
         self.backend_kwargs = backend_kwargs
@@ -133,20 +144,22 @@ class SyntheticSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
         self.temperature = temperature
         self.verbose = verbose
         self.logger = logger
+        self.pos_label = pos_label
 
-    def fit_resample(self, X: list[str], y: Any) -> tuple[list[str], list[int]]:
+    def fit_resample(self, X: list[str], y: Any) -> tuple[list[str], list[Any]]:
         """Generate anonymized synthetic positives and append them to the dataset.
 
         Args:
             X: Raw texts. Must be a list of strings, not a numeric feature matrix.
-            y: Binary labels. Positive class must be 1; negative class must be 0.
-                The negative pool is only used to validate ``y`` -- it is never
-                shown to the backend.
+            y: Binary labels; see ``pos_label`` and
+                ``pntx._labels.resolve_binary_labels`` for how the positive
+                value is determined. The negative pool is only used to
+                validate ``y`` -- it is never shown to the backend.
 
         Returns:
             Tuple of (augmented texts, augmented labels) where the appended
             texts are the generated synthetic positives and the appended
-            labels are all 1.
+            labels are all the positive label resolved from ``y``.
         """
         if self.n_synthesized < 0:
             raise ValueError(f"n_synthesized must be >= 0, got {self.n_synthesized}")
@@ -175,18 +188,8 @@ class SyntheticSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
             raise ValueError(
                 f"X and y must have the same length, got len(X)={len(X)} and len(y)={len(y_list)}"
             )
-        label_set = set(y_list)
-        if not label_set <= {0, 1}:
-            raise ValueError(
-                f"y must contain only binary labels {{0, 1}}, got {label_set - {0, 1}}"
-            )
-
-        pos_texts = [t for t, yi in zip(X, y_list, strict=True) if yi == 1]
-        neg_texts = [t for t, yi in zip(X, y_list, strict=True) if yi == 0]
-        if not pos_texts:
-            raise ValueError("y must contain at least one positive (1) sample")
-        if not neg_texts:
-            raise ValueError("y must contain at least one negative (0) sample")
+        _, positive_label = resolve_binary_labels(y_list, pos_label=self.pos_label)
+        pos_texts = [t for t, yi in zip(X, y_list, strict=True) if yi == positive_label]
 
         self.backend_ = resolve_backend(self.backend, self.backend_kwargs)
 
@@ -303,7 +306,7 @@ class SyntheticSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
 
         generated_texts = [st.text for st in self.generation_result_.synthetic_texts]
         X_aug = list(X) + generated_texts
-        y_aug = y_list + [1] * len(generated_texts)
+        y_aug = y_list + [positive_label] * len(generated_texts)
         return X_aug, y_aug
 
     def save(self, path: str | os.PathLike[str]) -> None:

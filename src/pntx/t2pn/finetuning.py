@@ -11,6 +11,8 @@ from numpy.typing import NDArray
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.utils.validation import check_is_fitted
 
+from .._labels import resolve_binary_labels
+
 try:
     import torch
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -46,11 +48,14 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
     so there is no loaded model to share with ``LLMPromptingClassifier``/
     ``pn2t``.
 
-    ``y`` may be any two hashable, orderable values (e.g. ``0``/``1``,
-    ``"positive"``/``"negative"``); the greater of the two (``classes_[1]``)
-    is treated as the model's label ``1`` and the lesser (``classes_[0]``)
-    as label ``0``, mirroring ``LLMPromptingClassifier``'s convention.
-    ``predict_proba``'s columns follow ``classes_`` order.
+    ``y`` may be any two distinct hashable values; which one means
+    "positive" (the model's label ``1``) is resolved by
+    ``pntx._labels.resolve_binary_labels`` (see the ``pos_label``
+    parameter below), the same rule ``LLMPromptingClassifier`` uses:
+    numeric pairs resolve to their greater value, the exact pair
+    ``"positive"``/``"negative"`` resolves directly, anything else
+    requires ``pos_label``. ``classes_`` is ``[negative_label,
+    positive_label]``, and ``predict_proba``'s columns follow it.
     """
 
     def __init__(
@@ -64,6 +69,7 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         class_weight: str | dict[Any, float] | None = None,
         device: str | None = None,
         seed: int | None = None,
+        pos_label: Any = None,
     ) -> None:
         """``model_name`` is a Hugging Face Hub checkpoint id or local path
         passed to ``AutoModelForSequenceClassification.from_pretrained``/
@@ -84,6 +90,11 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
 
         ``device`` defaults to ``None``, which resolves to ``"cuda"`` if
         available, else ``"cpu"``.
+
+        ``pos_label`` says which of the two values in ``fit``'s ``y`` means
+        "positive"; ``None`` (default) auto-resolves it (numeric: greater
+        value; ``"positive"``/``"negative"``: used directly) and raises
+        ``ValueError`` if ``y``'s two values don't fit either rule.
         """
         self.model_name = model_name
         self.epochs = epochs
@@ -93,6 +104,7 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         self.class_weight = class_weight
         self.device = device
         self.seed = seed
+        self.pos_label = pos_label
 
     def fit(self, X: Iterable[str], y: Iterable[Any]) -> FineTuningClassifier:
         """Fine-tune ``model_name`` as a binary classifier over ``(X, y)``.
@@ -108,9 +120,8 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
                 f"X and y must have the same length, got len(X)={len(texts)} "
                 f"and len(y)={len(labels)}"
             )
-        classes = sorted(set(labels))
-        if len(classes) != 2:
-            raise ValueError(f"y must contain exactly 2 classes, got {len(classes)}: {classes}")
+        negative_label, positive_label = resolve_binary_labels(labels, pos_label=self.pos_label)
+        classes = [negative_label, positive_label]
 
         if self.seed is not None:
             torch.manual_seed(self.seed)

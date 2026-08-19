@@ -11,9 +11,9 @@
 
 重要な前提:
 - **正例/負例の意味論はユーザが定義する。** 感情ポジネガに限らず任意の対比軸(フォーマル/カジュアル、規約準拠/違反 など)を扱う。ライブラリはプールの意味を解釈せず、与えられたテキストをそのまま few-shot 素材・スコアリング素材として使う。
-- **入力は scikit-learn / imbalanced-learn の `(X, y)` 規約に合わせる。** `X: list[str]`(生テキスト)、`y`(0/1 または `"positive"`/`"negative"` などの2値ラベル)。ペアリングを強制しない点は従来通り(`y` でグルーピングした結果、positive/negative それぞれの件数が揃う必要はない)。**ただし `t2pn` の各 Classifier(`LLMPromptingClassifier.fit`/`FineTuningClassifier.fit`)、`pn2t.OverSampler.fit_resample` はどちらも両クラスが最低1件ずつ存在することを要求する**(旧仕様にあった「片側のプールだけで fit」というスモークテスト用途は、sklearn/imblearn の分類データセット規約を採用したことに伴い廃止)。
+- **入力は scikit-learn / imbalanced-learn の `(X, y)` 規約に合わせる。** `X: list[str]`(生テキスト)、`y`(2値ラベル)。`y` のどちらの値が "positive" かは `pntx._labels.resolve_binary_labels` で解決する(0/1 や -1/1 のような数値ペアは大きい方が自動的に positive、`"positive"`/`"negative"` 文字列はそのまま、それ以外の任意の2値(例: `"spam"`/`"ham"`)は `pos_label` 引数で明示)— 詳細は後述の「ラベル解決」節。ペアリングを強制しない点は従来通り(`y` でグルーピングした結果、positive/negative それぞれの件数が揃う必要はない)。**ただし `t2pn` の各 Classifier(`LLMPromptingClassifier.fit`/`FineTuningClassifier.fit`)、`pn2t` の各 Sampler(`OverSampler.fit_resample`/`SyntheticSampler.fit_resample`)はどちらも両クラスが最低1件ずつ存在することを要求する**(旧仕様にあった「片側のプールだけで fit」というスモークテスト用途は、sklearn/imblearn の分類データセット規約を採用したことに伴い廃止)。
 - **llama.cpp インプロセス実行が LLM 系コンポーネントの主戦場。** 現在ビルトインで提供する LLM バックエンドは `LlamaCppBackend` のみ(`AnthropicBackend` は一旦廃止 — 経緯は後述)。設計判断で迷ったら llama.cpp での性能・体験を優先する。`t2pn.LLMPromptingClassifier`・`pn2t` とも、LLM 呼び出しは共通の `Backend` 抽象を経由し、同じロード済みモデル(例: 同一の `LlamaCppBackend` インスタンス)を共有できるようにする。**それぞれが独自の LLM クライアントを持って別々にモデルをロードする実装は禁止**(ローカル推論のメモリ/VRAM を二重に食うため)。リモートAPIバックエンドを将来また追加する場合も、`Backend` プロトコルを実装するだけで足りる設計(`_backend_resolve.py` のレジストリに1行足すだけ)は維持すること。**`t2pn.FineTuningClassifier` はこの `Backend` 抽象の対象外。** LLM 補完/スコアリングを一切使わず、`transformers`/`torch` で事前学習済みエンコーダを直接 fine-tuning する別経路であり、`LlamaCppBackend` などとモデルロードを共有する必要も想定もない。
-- **`pn2t` には目的の異なる2つの Sampler がある。** `OverSampler`(分類器学習データ拡張、hard positive)と `SyntheticSampler`(匿名化された代表的合成データ、データ公開用途)。どちらも positive 側のみ生成、二値ラベル `{0, 1}` のみサポートという制約は共通。negative 側生成、3値以上への一般化は引き続きスコープ外(後述)。
+- **`pn2t` には目的の異なる2つの Sampler がある。** `OverSampler`(分類器学習データ拡張、hard positive)と `SyntheticSampler`(匿名化された代表的合成データ、データ公開用途)。どちらも positive 側のみ生成、二値ラベルのみサポート(エンコーディングは `resolve_binary_labels` 経由で `t2pn` と共通)という制約は共通。negative 側生成、3値以上への一般化は引き続きスコープ外(後述)。
 
 ## 公開 API(この形を維持すること)
 
@@ -96,13 +96,24 @@ class ScoringBackend(Backend, Protocol):
 - `save`/`load` はこのミックスインでは提供しない。`pn2t.OverSampler`/`pn2t.SyntheticSampler` は現状それぞれが個別に(ほぼ同じ形の)`save(path)`/`load(path, backend=...)` を実装している(`backend` を除いた fitted state を JSON にシリアライズし、`load` 時に `backend` を再注入する、という点は共通)。`t2pn.LLMPromptingClassifier` に追加する `save`/`load` もこの既存パターンをそのまま踏襲する(**`backend` を素朴に pickle/JSON化しない**のが要点: `LlamaCppBackend` のようなロード済みモデルを抱えるオブジェクトを毎回シリアライズするのは重すぎるし、`llama_cpp.Llama` 内部状態はそもそも安全に pickle できる保証がない)。3クラスで実装が重複することになるが、既存の重複を解消する共有ヘルパーへの切り出しは本タスクのスコープ外(必要になれば別途リファクタリングする)。
 - `t2pn.FineTuningClassifier` の `save`/`load` はこれらのどれとも別物: `backend` という概念がなく、代わりに学習済み重み自体を永続化する必要があるため独自実装になる(下記)。
 
+### ラベル解決(`pntx/_labels.py`)— `t2pn`/`pn2t` 全4クラス共有
+
+`resolve_binary_labels(y, *, pos_label=None) -> (negative_label, positive_label)` を提供する共有ヘルパー。`t2pn.LLMPromptingClassifier.fit`/`t2pn.FineTuningClassifier.fit`/`pn2t.OverSampler.fit_resample`/`pn2t.SyntheticSampler.fit_resample` の全4クラスがこれを通して `y` の2値のどちらが "positive" かを解決する(データセットのラベルエンコーディングを `t2pn`/`pn2t` 間で揃え直す必要がないようにするため)。解決規則:
+
+1. `pos_label` が明示されていればそれが最優先(`y` に含まれる2値のどちらかである必要がある)。
+2. 両方が数値(`int`/`float`/`bool`)なら大きい方が positive(`{0, 1}` → `1`、`{-1, 1}` → `1`)。
+3. `"positive"`/`"negative"`(`pntx.types.POSITIVE`/`NEGATIVE`)ちょうどそのペアなら、そのまま使う。
+4. それ以外(任意の非数値ペア、例: `{"spam", "ham"}`)は一意に決まらないため `pos_label` 必須 — 省略時は `ValueError`。
+
+`y` に含まれる distinct な値が2つでない場合も `ValueError`(この検証を兼ねるため、`t2pn`/`pn2t` の各 `fit`/`fit_resample` は「両クラス最低1件」チェックを別途書かない — `resolve_binary_labels` が通れば自動的に満たされている)。`t2pn` 側の `classes_` は `[negative_label, positive_label]`(この順)で構築し、`predict_proba` の列順もこれに従う。`pn2t` 側は生成テキストを `positive_label` の値でラベル付けして末尾に追加する(`1` 決め打ちではない)。
+
 ### `t2pn` Classifier ファミリー(`pntx/t2pn/`)
 
 `t2pn.py` 単一ファイルではなく `pntx/t2pn/` パッケージとし(`pn2t` と同型の構成)、分類アプローチの異なる複数の Classifier を持つ。全て `sklearn.base.BaseEstimator` + `ClassifierMixin` を継承し、`X: list[str]` / 二値ラベル `y` という共通の `(X, y)` 契約に従う。`X` は生テキストの list なので、数値配列を前提にした `check_X_y`/`check_array` を素通りさせるため estimator tags(`X_types: ["string"]` 相当、`no_validation` 系)を各クラスで適切に設定すること。`sklearn.utils.estimator_checks.check_estimator` に literal に通す必要はないが、`Pipeline`/`cross_val_score` で壊れないことは確認する。
 
 #### `t2pn.LLMPromptingClassifier`(`pntx/t2pn/prompting.py`)
 
-- `fit(X, y)` は `y` でグルーピングして positive/negative プールを作るだけで、学習は行わない(旧 `PNTX.fit` のロジックを流用)。ラベルは 0/1 でも `"positive"`/`"negative"` 文字列でも受け付ける。
+- `fit(X, y)` は `y` でグルーピングして positive/negative プールを作るだけで、学習は行わない(旧 `PNTX.fit` のロジックを流用)。`y` のラベルエンコーディングは `resolve_binary_labels`(前述)経由で解決する(0/1、-1/1、`"positive"`/`"negative"` は自動、それ以外は `pos_label` 明示)。
 - 分類ロジック自体(exemplar 選択 → プロンプト構築 → スコアリング or パース)は既存の `pntx/selection.py` / `pntx/prompts.py` / `core.py` の分類パスをそのまま移設する。二段構えの分岐(`ScoringBackend` なら logprob 比較、そうでなければ生成テキストのパース)も維持。
 - `predict_batch` 相当は `predict`/`predict_proba` がバッチを受け取れることで代替する(旧 `classify_batch` の「逐次 for ループ禁止、バックエンドごとに最適化」という制約はそのまま `predict`/`predict_proba` の内部実装に引き継ぐ)。
 - `save`/`load` を追加する(`OverSampler`/`SyntheticSampler` と同じ手書きパターン)。`backend` を除いた fitted state(`classes_`/`positive_`/`negative_`/`exemplar_positive_`/`exemplar_negative_`/`exemplar_prefix_`/`calibration_weights_`)だけを JSON 化し、`load(path, backend=...)` で `backend` を再注入する。
@@ -126,14 +137,14 @@ class ScoringBackend(Backend, Protocol):
 ### `pn2t.OverSampler`(`pntx/pn2t/`)— `semaxis.HardPositiveOverSampler` の完全移植 + Backend 統合
 
 - `sklearn.base.BaseEstimator` を継承する(imbalanced-learn の `BaseOverSampler` は継承しない。`fit_resample` を duck-typing で提供するだけで `imblearn.pipeline.Pipeline` から利用可能なため、`imbalanced-learn` 自体は必須依存に加えない)。
-- `fit_resample(X, y)`: 二値ラベルのみサポート(`{0, 1}`)。`y=1` を positive として扱い、生成されたテキストは `y=1` として末尾に追加される。**`pn2t` v1 は positive 側の生成のみ**(negative 側や3値以上への一般化は将来の拡張)。
+- `fit_resample(X, y)`: 二値ラベルのみサポート。どちらが positive かは `resolve_binary_labels`(前述)で解決し、生成されたテキストはその positive ラベルの値で末尾に追加される(`1` 決め打ちではない)。**`pn2t` v1 は positive 側の生成のみ**(negative 側や3値以上への一般化は将来の拡張)。
 - アルゴリズムは semaxis 実装をそのまま踏襲:
   1. positive/negative それぞれの exemplar をトークン予算内でサンプリング(`sample_method`: `random`/他、`context_limit` に基づく予算計算)。
   2. positive/negative の特徴・境界特徴(boundary features)を LLM に分析させ、"専門家なら positive と判定するが浅い分類器は negative と誤判定しうる" hard positive テキストを `batch_size` 件ずつバッチ生成。
   3. 完全一致ベースの dedup(`deduplicate=True` がデフォルト。元データ・既に採択した生成物との文字列一致のみを見る — 旧 `pntx/generate.py` にあった n-gram 近似重複除去とは別物で、v1 では使わない)。`SyntheticSampler` はこれとは別目的の漏洩検出レイヤーを追加で持つ(下記)。
   4. `target_count`(`n_synthesized` 明示指定 or `None` でクラスバランスまで自動計算)に達するまでバッチ生成を繰り返し、上限バッチ数に達したら警告付きで打ち切る。
 - `generation_result_`(`positive_features`/`negative_features`/`boundary_features`/`hard_positives`、pydantic モデル)を fit 後に公開。`save(path)`/`load(path, backend=...)` で JSON へシリアライズ・復元できる(`backend` は除外し、`load` 時に再注入 — 上記 `LLMEstimatorMixin` の節参照。実装は `t2pn.LLMPromptingClassifier` と同じパターンだが、コードは個別)。
-- コンストラクタ引数(`batch_size`, `max_examples_per_class`, `deduplicate`, `context_limit`, `language`, `seed`, `sample_method`, `verbose`, `logger`)は semaxis 版を踏襲しつつ、`llm: BaseLLMClient | str` は `backend: Backend | str` に置き換える(pntx の `_resolve_backend` を再利用)。
+- コンストラクタ引数(`batch_size`, `max_examples_per_class`, `deduplicate`, `context_limit`, `language`, `seed`, `sample_method`, `verbose`, `logger`)は semaxis 版を踏襲しつつ、`llm: BaseLLMClient | str` は `backend: Backend | str` に置き換える(pntx の `_resolve_backend` を再利用)。加えて `pos_label`(前述の `resolve_binary_labels` に渡す)を追加。
 
 ### `pn2t.SyntheticSampler`(`pntx/pn2t/`)— 匿名化された代表的合成データ生成
 
