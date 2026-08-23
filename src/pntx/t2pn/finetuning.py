@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 from collections.abc import Iterable
@@ -16,7 +17,11 @@ from .._labels import resolve_binary_labels
 
 try:
     import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    from transformers import (
+        AutoModelForSequenceClassification,
+        AutoTokenizer,
+        get_constant_schedule_with_warmup,
+    )
 except ImportError as e:
     raise ImportError(
         "FineTuningClassifier requires the 'finetuning' extra. "
@@ -65,6 +70,8 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         *,
         epochs: int = 3,
         learning_rate: float = 2e-5,
+        weight_decay: float = 0.01,
+        warmup_ratio: float = 0.0,
         batch_size: int = 8,
         eval_batch_size: int | None = None,
         gradient_accumulation_steps: int = 1,
@@ -118,6 +125,19 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         a CPU device raises ``ValueError`` at ``fit``/``load`` time rather
         than silently falling back to full precision.
 
+        ``weight_decay`` (default ``0.01``, matching ``torch.optim.AdamW``'s
+        own default) is passed straight through to the optimizer's L2
+        penalty.
+
+        ``warmup_ratio`` (default ``0.0``) is the fraction of total
+        optimizer steps (across all epochs) spent linearly ramping the
+        learning rate up from ``0`` to ``learning_rate`` before holding it
+        constant for the remainder of training (via ``transformers``'
+        ``get_constant_schedule_with_warmup``); the default ``0.0`` means
+        zero warmup steps, i.e. ``learning_rate`` is constant from the
+        first step, reproducing training as it behaved before this
+        scheduler was introduced. Must be in ``[0, 1]``.
+
         ``device`` defaults to ``None``, which resolves to ``"cuda"`` if
         available, else ``"cpu"``.
 
@@ -129,6 +149,8 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         self.model_name = model_name
         self.epochs = epochs
         self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.warmup_ratio = warmup_ratio
         self.batch_size = batch_size
         self.eval_batch_size = eval_batch_size
         self.gradient_accumulation_steps = gradient_accumulation_steps
@@ -154,6 +176,8 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
                 f"X and y must have the same length, got len(X)={len(texts)} "
                 f"and len(y)={len(labels)}"
             )
+        if not 0.0 <= self.warmup_ratio <= 1.0:
+            raise ValueError(f"warmup_ratio must be between 0 and 1, got {self.warmup_ratio!r}")
         negative_label, positive_label = resolve_binary_labels(labels, pos_label=self.pos_label)
         classes = [negative_label, positive_label]
 
@@ -170,9 +194,21 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
         self.model_.to(self.device_)
 
         target_ids = [0 if label == classes[0] else 1 for label in labels]
-        optimizer = torch.optim.AdamW(self.model_.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.AdamW(
+            self.model_.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
+        )
         loss_fn = torch.nn.CrossEntropyLoss(weight=self._resolve_class_weight(classes, target_ids))
         scaler = torch.amp.GradScaler("cuda", enabled=self.fp16)
+
+        # Optimizer-step count matches the flush-per-epoch accounting below
+        # (a trailing partial accumulation group still gets its own step).
+        num_batches_per_epoch = math.ceil(len(texts) / self.batch_size)
+        steps_per_epoch = math.ceil(num_batches_per_epoch / self.gradient_accumulation_steps)
+        total_steps = self.epochs * steps_per_epoch
+        num_warmup_steps = round(self.warmup_ratio * total_steps)
+        scheduler = get_constant_schedule_with_warmup(
+            optimizer, num_warmup_steps=num_warmup_steps
+        )
 
         def optimizer_step() -> None:
             if self.fp16:
@@ -180,6 +216,7 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
                 scaler.update()
             else:
                 optimizer.step()
+            scheduler.step()
             optimizer.zero_grad()
 
         self.model_.train()

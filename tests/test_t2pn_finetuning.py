@@ -182,3 +182,34 @@ def test_fit_with_invalid_class_weight_raises(tiny_checkpoint: str) -> None:
     clf = _classifier(tiny_checkpoint, class_weight="unbalanced")
     with pytest.raises(ValueError, match="class_weight"):
         clf.fit(X, Y)
+
+
+def test_fit_with_invalid_warmup_ratio_raises(tiny_checkpoint: str) -> None:
+    clf = _classifier(tiny_checkpoint, warmup_ratio=1.5)
+    with pytest.raises(ValueError, match="warmup_ratio"):
+        clf.fit(X, Y)
+
+
+def test_fit_with_warmup_ratio_matches_default_result_when_zero(tiny_checkpoint: str) -> None:
+    # warmup_ratio=0.0 (the default) must reproduce training as it behaved
+    # before the warmup scheduler was introduced: a constant learning rate
+    # from the very first step, with no warmup ramp-up.
+    baseline = _classifier(tiny_checkpoint).fit(X, Y)
+    explicit_zero = _classifier(tiny_checkpoint, warmup_ratio=0.0).fit(X, Y)
+    np.testing.assert_allclose(
+        baseline.predict_proba(X), explicit_zero.predict_proba(X), atol=1e-6
+    )
+
+
+def test_fit_with_positive_warmup_ratio_trains_without_error(tiny_checkpoint: str) -> None:
+    clf = _classifier(tiny_checkpoint, warmup_ratio=0.5, epochs=2).fit(X, Y)
+    proba = clf.predict_proba(X)
+    assert proba.shape == (len(X), 2)
+    np.testing.assert_allclose(proba.sum(axis=1), np.ones(len(X)), atol=1e-5)
+
+
+def test_fit_with_weight_decay_zero_trains_without_error(tiny_checkpoint: str) -> None:
+    clf = _classifier(tiny_checkpoint, weight_decay=0.0).fit(X, Y)
+    proba = clf.predict_proba(X)
+    assert proba.shape == (len(X), 2)
+    np.testing.assert_allclose(proba.sum(axis=1), np.ones(len(X)), atol=1e-5)
