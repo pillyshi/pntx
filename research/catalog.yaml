@@ -1,0 +1,425 @@
+catalog_version: 1
+project: pntx
+verified_on:
+verification:
+  provider: OpenAlex
+  client: pyalex
+source_reports: []
+papers:
+- key: chawla-2002
+  title: 'SMOTE: Synthetic Minority Over-sampling Technique'
+  authors:
+  - Nitesh V. Chawla
+  - Kevin W. Bowyer
+  - Lawrence Hall
+  - W. Philip Kegelmeyer
+  year: 2002
+  publication_type: article
+  venue: Journal of Artificial Intelligence Research
+  identifiers:
+    doi: 10.1613/jair.953
+    openalex: W2148143831
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.OverSampler: classic minority oversampling that the imblearn-style fit_resample contract descends from.'
+  note_status: pending
+  pdf_status: missing
+- key: lemaitre-2016
+  title: 'Imbalanced-learn: A Python Toolbox to Tackle the Curse of Imbalanced Datasets in Machine Learning'
+  authors:
+  - Guillaume Lemaître
+  - Nogueira, Fernando
+  - Christos K. Aridas
+  year: 2016
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.1609.06570
+    openalex: W2521200999
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t: defines the fit_resample/Pipeline sampler API that OverSampler/SyntheticSampler duck-type.'
+  note_status: pending
+  pdf_status: missing
+- key: kaushik-2019
+  title: Learning the Difference that Makes a Difference with Counterfactually-Augmented Data
+  authors:
+  - Divyansh Kaushik
+  - Eduard H. Hovy
+  - Zachary C. Lipton
+  year: 2019
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.1909.12434
+    openalex: W2977235550
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.OverSampler: minimal label-flipping edits; prior art for generating text that isolates the decision-relevant difference.'
+  note_status: pending
+  pdf_status: missing
+- key: gardner-2020
+  title: Evaluating Models’ Local Decision Boundaries via Contrast Sets
+  authors:
+  - Matt Gardner
+  - Yoav Artzi
+  - Victoria Basmov
+  - Jonathan Berant
+  - Ben Bogin
+  - Sihao Chen
+  - Pradeep Dasigi
+  - Dheeru Dua
+  - Yanai Elazar
+  - Ananth Gottumukkala
+  - Nitish Gupta
+  - Hannaneh Hajishirzi
+  - Gabriel Ilharco
+  - Daniel Khashabi
+  - Kevin Lin
+  - Jiangming Liu
+  - Nelson F. Liu
+  - Phoebe Mulcaire
+  - Ning Qiang
+  - Sameer Kumar Singh
+  - Noah A. Smith
+  - Sanjay Subramanian
+  - Reut Tsarfaty
+  - Eric Wallace
+  - Ally Quan Zhang
+  - Ben Zhou
+  year: 2020
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2020.findings-emnlp.117
+    openalex: W3105928338
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.OverSampler: contrast sets probe local decision boundaries, the same notion behind boundary_features / hard positives.'
+  note_status: pending
+  pdf_status: missing
+- key: dai-2025
+  title: 'AugGPT: Leveraging ChatGPT for Text Data Augmentation'
+  authors:
+  - Haixing Dai
+  - Zhengliang Liu
+  - Wenxiong Liao
+  - Xiaoke Huang
+  - Yihan Cao
+  - Zihao Wu
+  - Lin Zhao
+  - Shaochen Xu
+  - Fang Zeng
+  - Wei Liu
+  - Ninghao Liu
+  - Sheng Li
+  - Dajiang Zhu
+  - Hongmin Cai
+  - Lichao Sun
+  - Quanzheng Li
+  - Dinggang G. Shen
+  - Tianming Liu
+  - Xiang Li
+  year: 2025
+  publication_type: article
+  venue: IEEE Transactions on Big Data
+  identifiers:
+    doi: 10.1109/tbdata.2025.3536934
+    openalex: W4406983345
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.OverSampler: LLM-prompted text augmentation for classifier training data.'
+  note_status: pending
+  pdf_status: missing
+- key: schick-2021
+  title: Generating Datasets with Pretrained Language Models
+  authors:
+  - Timo Schick
+  - Hinrich Schütze
+  year: 2021
+  publication_type: conference-paper
+  venue: Conference on Empirical Methods in Natural Language Processing (EMNLP)
+  identifiers:
+    doi: 10.18653/v1/2021.emnlp-main.555
+    openalex: W3154863804
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t: generating labeled datasets from instructions with a pretrained LM (DINO).'
+  note_status: pending
+  pdf_status: missing
+- key: ye-2022
+  title: 'ZeroGen: Efficient Zero-shot Learning via Dataset Generation'
+  authors:
+  - Jiacheng Ye
+  - Jiahui Gao
+  - Qintong Li
+  - Hang Xu
+  - Jiangtao Feng
+  - Zhiyong Wu
+  - Changyuan Yu
+  - Lingpeng Kong
+  year: 2022
+  publication_type: conference-paper
+  venue: Conference on Empirical Methods in Natural Language Processing (EMNLP)
+  identifiers:
+    doi: 10.18653/v1/2022.emnlp-main.801
+    openalex: W4385573325
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t: LLM-generated synthetic datasets used to train small task models.'
+  note_status: pending
+  pdf_status: missing
+- key: robinson-2020
+  title: Contrastive Learning with Hard Negative Samples
+  authors:
+  - Joshua Robinson
+  - Ching-Yao Chuang
+  - Suvrit Sra
+  - Stefanie Jegelka
+  year: 2020
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2010.04592
+    openalex: W3091940082
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.OverSampler: value of hard (near-boundary) samples for representation learning; motivates hard-positive objective.'
+  note_status: pending
+  pdf_status: missing
+- key: carlini-2020
+  title: Extracting Training Data from Large Language Models
+  authors:
+  - Nicholas Carlini
+  - Florian Tramèr
+  - Eric Wallace
+  - Matthew Jagielski
+  - Ariel Herbert-Voss
+  - Katherine Lee
+  - Roberts, Adam
+  - Brown, Tom
+  - Dawn Xiaodong Song
+  - Úlfar Erlingsson
+  - Alina Oprea
+  - Colin Raffel
+  year: 2020
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2012.07805
+    openalex: W3112689365
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.SyntheticSampler: verbatim training-data extraction from LMs; motivates the contains_verbatim_span leakage check.'
+  note_status: pending
+  pdf_status: missing
+- key: lee-2022
+  title: Deduplicating Training Data Makes Language Models Better
+  authors:
+  - Katherine Lee
+  - Daphne Ippolito
+  - Andrew Nystrom
+  - Chiyuan Zhang
+  - Douglas Eck
+  - Chris Callison-Burch
+  - Nicholas Carlini
+  year: 2022
+  publication_type: conference-paper
+  venue: Annual Meeting of the Association for Computational Linguistics (ACL)
+  identifiers:
+    doi: 10.18653/v1/2022.acl-long.577
+    openalex: W3177765786
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.SyntheticSampler / pntx.dedup: exact-substring duplicate detection; contains_verbatim_span applies the same idea as a leakage filter.'
+  note_status: pending
+  pdf_status: missing
+- key: kandpal-2022
+  title: Deduplicating Training Data Mitigates Privacy Risks in Language Models
+  authors:
+  - Nikhil Kandpal
+  - Wallace, Eric
+  - Colin Raffel
+  year: 2022
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2202.06539
+    openalex: W4226142937
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.SyntheticSampler: duplication drives memorization/privacy risk in generated text.'
+  note_status: pending
+  pdf_status: missing
+- key: yue-2023
+  title: 'Synthetic Text Generation with Differential Privacy: A Simple and Practical Recipe'
+  authors:
+  - Xiang Yue
+  - Huseyin A. Inan
+  - Xuechen Li
+  - Girish Kumar
+  - Julia McAnallen
+  - Hoda Shajari
+  - Huan Sun
+  - David Levitan
+  - Robert B. Sim
+  year: 2023
+  publication_type: conference-paper
+  venue: Annual Meeting of the Association for Computational Linguistics (ACL)
+  identifiers:
+    doi: 10.18653/v1/2023.acl-long.74
+    openalex: W4385571534
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.SyntheticSampler: DP synthetic text as a privacy-preserving data release; formal baseline vs. pntx best-effort anonymisation.'
+  note_status: pending
+  pdf_status: missing
+- key: xie-2024
+  title: 'Differentially Private Synthetic Data via Foundation Model APIs 2: Text'
+  authors:
+  - Chulin Xie
+  - Zinan Lin
+  - Artūrs Bačkurs
+  - Sivakanth Gopi
+  - Da Yu
+  - Huseyin A Inan
+  - Harsha Nori
+  - Haotian Jiang
+  - Huishuai Zhang
+  - Yin Tat Lee
+  - Li, Bo
+  - Sergey Yekhanin
+  year: 2024
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2403.01749
+    openalex: W4392488396
+  relevance: to_classify
+  priority: to_review
+  rationale: 'pn2t.SyntheticSampler: DP synthetic text via inference-only LLM APIs (Aug-PE); closest formal alternative to prompt-based anonymisation.'
+  note_status: pending
+  pdf_status: missing
+- key: brown-2020
+  title: Language Models are Few-Shot Learners
+  authors:
+  - Brown, Tom B.
+  - Benjamin Mann
+  - Nick Ryder
+  - Melanie Subbiah
+  - Jared Kaplan
+  - Prafulla Dhariwal
+  - Arvind Neelakantan
+  - Pranav Shyam
+  - Girish Sastry
+  - Amanda Askell
+  - Sandhini Agarwal
+  - Ariel Herbert-Voss
+  - Gretchen Marie Krueger
+  - Tom Henighan
+  - Rewon Child
+  - Aditya Ramesh
+  - Ziegler, Daniel M.
+  - Jeffrey Wu
+  - Clemens Winter
+  - Christopher Hesse
+  - Mark I-Cheng Chen
+  - Sigler, Eric
+  - Mateusz Litwin
+  - Scott Gray
+  - Benjamin Chess
+  - Jack Clark
+  - Christopher Berner
+  - Sam McCandlish
+  - Alec Radford
+  - Ilya Sutskever
+  - Dario Amodei
+  year: 2020
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2005.14165
+    openalex: W3030163527
+  relevance: to_classify
+  priority: to_review
+  rationale: 't2pn.LLMPromptingClassifier: few-shot in-context classification foundation.'
+  note_status: pending
+  pdf_status: missing
+- key: zhao-2021
+  title: 'Calibrate Before Use: Improving Few-Shot Performance of Language Models'
+  authors:
+  - Tony Z. Zhao
+  - Eric Wallace
+  - Shi Feng
+  - Dan Klein
+  - Sameer Kumar Singh
+  year: 2021
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2102.09690
+    openalex: W3132736064
+  relevance: to_classify
+  priority: to_review
+  rationale: 't2pn.LLMPromptingClassifier: contextual calibration; basis for calibration_weights_.'
+  note_status: pending
+  pdf_status: missing
+- key: liu-2022
+  title: What Makes Good In-Context Examples for GPT-3?
+  authors:
+  - Jiachang Liu
+  - Dinghan Shen
+  - Yizhe Zhang
+  - Bill Dolan
+  - Lawrence Carin
+  - Weizhu Chen
+  year: 2022
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2022.deelio-1.10
+    openalex: W3122241445
+  relevance: to_classify
+  priority: to_review
+  rationale: 't2pn / selection.NearestSelector: retrieving semantically similar in-context examples.'
+  note_status: pending
+  pdf_status: missing
+- key: min-2022
+  title: 'Rethinking the Role of Demonstrations: What Makes In-Context Learning Work?'
+  authors:
+  - Sewon Min
+  - Xinxi Lyu
+  - Ari Holtzman
+  - Mikel Artetxe
+  - Mike Lewis
+  - Hannaneh Hajishirzi
+  - Luke Zettlemoyer
+  year: 2022
+  publication_type: conference-paper
+  venue: Conference on Empirical Methods in Natural Language Processing (EMNLP)
+  identifiers:
+    doi: 10.18653/v1/2022.emnlp-main.759
+    openalex: W4385567149
+  relevance: to_classify
+  priority: to_review
+  rationale: 't2pn / selection: what demonstration properties matter for in-context learning.'
+  note_status: pending
+  pdf_status: missing
+- key: devlin-2019
+  title: 'BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding'
+  authors:
+  - Jacob Devlin
+  - Ming‐Wei Chang
+  - Kenton Lee
+  - Kristina Toutanova
+  year: 2019
+  publication_type: conference-paper
+  venue: 'Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL-HLT)'
+  identifiers:
+    doi: 10.18653/v1/n19-1423
+    openalex: W2963341956
+  relevance: to_classify
+  priority: to_review
+  rationale: 't2pn.FineTuningClassifier: default encoder (bert-base-multilingual-cased) and fine-tuning recipe.'
+  note_status: pending
+  pdf_status: missing
