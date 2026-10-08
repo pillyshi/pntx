@@ -279,6 +279,46 @@ single sampled run at temperature 0.7. That is a meaningful but not conclusive
 difference. No further prompt rounds are planned, per the maintainer's direction
 to not over-invest in small-model quality.
 
+### Negative result: "blind" self-check (2026-10-08, reverted)
+
+**Hypothesis**, from the literature survey
+(`research/reports/2026-10-08-cad-contrast-set-followups-llm.md`): `"self"`
+catches few failed flips because the editor is asked to confirm the target label
+right after being told to produce it. LLM judges tend to agree with a provided
+label ([[nguyen-2024]]). So asking for the label *without* stating the target
+should help.
+
+**Change tried.** The `is_positive: bool` field was replaced by
+`reader_label: "Positive" | "Negative" | "Ambiguous"`, described as "the label a
+reader would assign who sees ONLY edited_text … 'Ambiguous' if the text mixes
+Positive and Negative judgments". This also dropped the old instruction to "set
+it to false if any Negative judgment remains". Nothing else changed: same pilot,
+same seed, same models (qwen2.5-7B editor, llama3.1-8B judge).
+
+| | `is_positive` (prompt v2) | `reader_label` (blind) |
+|---|---|---|
+| self says positive | 34/40 | 39/40 |
+| self catch rate | 0.26 | **0.06** |
+| self precision (none, same run) | 0.59 (0.53) | 0.59 (0.57) |
+| classifier precision / catch | 0.77 / 0.74 | 0.74 / 0.59 |
+| `"Ambiguous"` used | – | 0 times |
+
+**Outcome:** reverted. The neutral question did not make the judgment blind.
+The editor wrote the text *intending* it to be positive and labelled 39 of 40 as
+`"Positive"`. It never used `"Ambiguous"`, even on the partial flips the judge
+called negative.
+
+The catches under prompt v2 evidently came from the explicit failure criterion
+("false if any Negative judgment remains"), not from neutral wording. A truly
+blind check needs a *separate* call that doesn't see the editing instruction.
+With the same backend, that is essentially `verify=<LLMPromptingClassifier>`,
+which is already supported and measured.
+
+So same-response self-assessment appears to have a low ceiling, and prompt v2's
+`is_positive` wording is the better of the two tried. Single run; the catch-rate
+difference (5/19 vs 1/17 judge-negative candidates caught) is large enough to act
+on, but it is not a precise estimate.
+
 ### `max_edit_ratio` calibration (2026-10-08)
 
 On the 363 human negative→positive revisions in the CAD test and dev splits,
