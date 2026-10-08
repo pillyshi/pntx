@@ -28,13 +28,6 @@ __all__ = ["BaseLLMOverSampler", "SamplingStrategy"]
 
 PROMPT_OVERHEAD = 500
 
-# Default for parameters kept only for backward compatibility (sklearn's
-# convention for deprecated __init__ params: a sentinel default, warned about
-# at fit time, so get_params()/clone() keep working during the deprecation).
-DEPRECATED = "deprecated"
-_DEPRECATED_IN = "0.16.0"
-_REMOVED_IN = "0.18.0"
-
 SamplingStrategy: TypeAlias = (
     str | float | Mapping[Any, int] | Callable[[list[Any]], Mapping[Any, int]]
 )
@@ -179,9 +172,9 @@ def _n_from_dict(
 def make_rng(random_state: Any) -> random.Random:
     """``random.Random`` from an sklearn-style ``random_state``.
 
-    An ``int``/``None`` seeds ``random.Random`` directly (so results match the
-    old ``seed=`` parameter for the same int); a ``numpy.random.RandomState``
-    seeds it with one draw from that generator.
+    An ``int``/``None`` seeds ``random.Random`` directly (so an int gives the
+    same results as the pre-0.16.0 ``seed=`` parameter); a
+    ``numpy.random.RandomState`` seeds it with one draw from that generator.
     """
     if random_state is None or (
         isinstance(random_state, Integral) and not isinstance(random_state, bool)
@@ -234,12 +227,11 @@ class BaseLLMOverSampler(
     _batch_model: ClassVar[type[BaseModel]]
     _progress_desc: ClassVar[str]
     _items_name: ClassVar[str]
-    _default_sampling_strategy: ClassVar[str | None]
 
     # Common __init__ parameters (assigned by each subclass's __init__).
     backend: Backend | str
     backend_kwargs: dict[str, Any] | None
-    sampling_strategy: SamplingStrategy | None
+    sampling_strategy: SamplingStrategy
     batch_size: int
     deduplicate: bool
     context_limit: int
@@ -252,8 +244,6 @@ class BaseLLMOverSampler(
     verbose: bool
     logger: _Logger | None
     pos_label: Any
-    n_synthesized: Any
-    seed: Any
 
     generation_result_: ResultT
 
@@ -347,7 +337,6 @@ class BaseLLMOverSampler(
             texts are the generated positives and the appended labels are all
             the positive label resolved from ``y``.
         """
-        n_synthesized, sampling_strategy, random_state = self._resolve_deprecated_params()
         self._validate_params()
 
         y_list = list(y)
@@ -359,20 +348,12 @@ class BaseLLMOverSampler(
         pos_texts = [t for t, yi in zip(X, y_list, strict=True) if yi == positive_label]
         neg_texts = [t for t, yi in zip(X, y_list, strict=True) if yi == negative_label]
 
-        if n_synthesized is not None:
-            target_count = n_synthesized
-        else:
-            if sampling_strategy is None:
-                raise ValueError(
-                    f"{type(self).__name__} requires sampling_strategy (there is no natural "
-                    "default target); e.g. sampling_strategy={pos_label: n_samples_after}."
-                )
-            target_count = resolve_n_to_generate(
-                sampling_strategy,
-                y_list,
-                positive_label=positive_label,
-                negative_label=negative_label,
-            )
+        target_count = resolve_n_to_generate(
+            self.sampling_strategy,
+            y_list,
+            positive_label=positive_label,
+            negative_label=negative_label,
+        )
 
         self.backend_ = resolve_backend(self.backend, self.backend_kwargs)
 
@@ -389,7 +370,7 @@ class BaseLLMOverSampler(
             y_list,
             positive_label=positive_label,
             negative_label=negative_label,
-            random_state=random_state,
+            random_state=self.random_state,
         )
 
         self.generation_result_ = self._new_result()
@@ -402,7 +383,7 @@ class BaseLLMOverSampler(
         )
         self._check_exemplars_fit(pos_texts, neg_texts, budget, tokenizer_fn)
 
-        rng = make_rng(random_state)
+        rng = make_rng(self.random_state)
 
         accepted = self._accepted_items()
         original_texts = set(X)
@@ -523,50 +504,6 @@ class BaseLLMOverSampler(
         obj = cls(backend=backend, **kwargs)
         obj.generation_result_ = cast("ResultT", cls._result_model.model_validate(data))
         return obj
-
-    def _resolve_deprecated_params(self) -> tuple[int | None, SamplingStrategy | None, Any]:
-        """Map deprecated ``n_synthesized``/``seed`` onto their replacements.
-
-        Returns ``(n_to_generate_or_None, sampling_strategy, random_state)``;
-        when ``n_synthesized`` was given, the first element overrides
-        ``sampling_strategy``.
-        """
-        n_to_generate: int | None = None
-        sampling_strategy = self.sampling_strategy
-        if self.n_synthesized != DEPRECATED:
-            warnings.warn(
-                f"'n_synthesized' was deprecated in {_DEPRECATED_IN} and will be removed in "
-                f"{_REMOVED_IN}. Use sampling_strategy instead (e.g. "
-                "sampling_strategy={pos_label: n_positive + n_synthesized}, or 'auto' "
-                "for n_synthesized=None).",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            if sampling_strategy != self._default_sampling_strategy:
-                raise ValueError("Pass either sampling_strategy or n_synthesized, not both.")
-            if self.n_synthesized is None:
-                sampling_strategy = "auto"
-            elif (
-                not isinstance(self.n_synthesized, Integral)
-                or isinstance(self.n_synthesized, bool)
-                or self.n_synthesized < 0
-            ):
-                raise ValueError(f"n_synthesized must be >= 0, got {self.n_synthesized}")
-            else:
-                n_to_generate = int(self.n_synthesized)
-
-        random_state = self.random_state
-        if self.seed != DEPRECATED:
-            warnings.warn(
-                f"'seed' was deprecated in {_DEPRECATED_IN} and will be removed in "
-                f"{_REMOVED_IN}. Use random_state instead.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            if random_state is not None:
-                raise ValueError("Pass either random_state or seed, not both.")
-            random_state = self.seed
-        return n_to_generate, sampling_strategy, random_state
 
     def _validate_params(self) -> None:
         if self.batch_size < 1:

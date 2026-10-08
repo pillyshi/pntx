@@ -161,11 +161,13 @@ Rejected candidates are kept in `generation_result_.rejected` with a reason
 (`"edit_too_large"`, `"self_check_failed"`, `"verifier_rejected"`, ...) so you can see what
 each filter catches.
 
-> **Renamed in 0.16.0.** `OverSampler` → `HardPositiveOverSampler`, `SyntheticSampler` →
-> `TypicalPositiveOverSampler`, and their `n_synthesized`/`seed` parameters →
-> `sampling_strategy`/`random_state` (imbalanced-learn's names). The old names still work
-> with a `DeprecationWarning` and will be removed in 0.18.0. `n_synthesized=n` corresponds
-> to `sampling_strategy={pos_label: n_positive + n}`; `n_synthesized=None` to `"auto"`.
+> **Upgrading from before 0.16.0.** `OverSampler` is now `HardPositiveOverSampler`,
+> `SyntheticSampler` is now `TypicalPositiveOverSampler`, and their `n_synthesized`/`seed`
+> parameters are now `sampling_strategy`/`random_state` (imbalanced-learn's names). The old
+> names were deprecated in 0.16.0 and **removed in 0.18.0**, so they now raise
+> `ImportError`/`TypeError`. Replace `n_synthesized=n` with
+> `sampling_strategy={pos_label: n_positive + n}`, and `n_synthesized=None` with `"auto"`.
+> An int `random_state` gives the same results as the same int `seed` did.
 
 ## Installation
 

@@ -13,7 +13,6 @@ from .. import dedup
 from ..backends.base import Backend
 from . import prompts
 from ._base import (
-    DEPRECATED,
     PROMPT_OVERHEAD,
     BaseLLMOverSampler,
     SamplingStrategy,
@@ -161,12 +160,6 @@ class CounterfactualOverSampler(
     _batch_model = CounterfactualBatch
     _progress_desc = "Generating counterfactual edits"
     _items_name = "counterfactual edits"
-    _default_sampling_strategy = "auto"
-
-    # Introduced after the n_synthesized/seed deprecation, so it never
-    # accepted them; the base class still reads these attributes.
-    n_synthesized: Any = DEPRECATED
-    seed: Any = DEPRECATED
 
     def __init__(
         self,

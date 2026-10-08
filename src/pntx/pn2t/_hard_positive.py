@@ -9,7 +9,6 @@ import numpy as np
 from ..backends.base import Backend
 from . import prompts
 from ._base import (
-    DEPRECATED,
     PROMPT_OVERHEAD,
     BaseLLMOverSampler,
     SamplingStrategy,
@@ -31,7 +30,7 @@ class HardPositiveOverSampler(
     ``Backend`` abstraction instead of semaxis's separate LLM client, so
     ``t2pn.LLMPromptingClassifier`` and ``HardPositiveOverSampler`` can share
     one loaded model instead of each loading their own. (Named
-    ``OverSampler`` before 0.16.0; that name remains as a deprecated alias.)
+    ``OverSampler`` before 0.16.0.)
 
     Implements the imbalanced-learn ``fit_resample(X, y)`` interface for
     text arrays. ``imbalanced-learn`` itself is not imported or required --
@@ -91,9 +90,6 @@ class HardPositiveOverSampler(
     output across batches, whereas classification should be as deterministic
     as possible.
 
-    ``n_synthesized`` and ``seed`` are deprecated aliases (since 0.16.0,
-    removed in 0.18.0) for ``sampling_strategy`` and ``random_state``.
-
     Fitted attributes:
         generation_result_: Full LLM response including feature analysis and
             per-sample evidence. Useful for auditing boundary-defining
@@ -118,7 +114,6 @@ class HardPositiveOverSampler(
     _batch_model = HardPositiveGenerationResult
     _progress_desc = "Generating hard positives"
     _items_name = "hard positives"
-    _default_sampling_strategy = "auto"
 
     def __init__(
         self,
@@ -139,8 +134,6 @@ class HardPositiveOverSampler(
         verbose: bool = False,
         logger: _Logger | None = None,
         pos_label: Any = None,
-        n_synthesized: int | None | str = DEPRECATED,
-        seed: int | None | str = DEPRECATED,
     ) -> None:
         """``pos_label`` says which of the two values in ``fit_resample``'s
         ``y`` means "positive"; ``None`` (default) auto-resolves it
@@ -164,8 +157,6 @@ class HardPositiveOverSampler(
         self.verbose = verbose
         self.logger = logger
         self.pos_label = pos_label
-        self.n_synthesized = n_synthesized
-        self.seed = seed
 
     def _validate_extra_params(self) -> None:
         if self.max_examples_per_class is not None and self.max_examples_per_class < 1:

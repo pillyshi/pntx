@@ -88,11 +88,9 @@ def test_fit_resample_requires_matching_lengths() -> None:
         sampler.fit_resample(["a", "b"], [1])
 
 
-def test_fit_resample_without_sampling_strategy_raises() -> None:
-    X, y = _pools()
-    sampler = TypicalPositiveOverSampler(backend=FakeBackend())
-    with pytest.raises(ValueError, match="requires sampling_strategy"):
-        sampler.fit_resample(X, y)
+def test_sampling_strategy_is_required() -> None:
+    with pytest.raises(TypeError, match="sampling_strategy"):
+        TypicalPositiveOverSampler(backend=FakeBackend())  # type: ignore[call-arg]
 
 
 def test_sampling_strategy_requesting_no_new_samples_returns_original_data() -> None:
@@ -423,3 +421,19 @@ def test_fit_resample_does_not_require_imbalanced_learn_installed() -> None:
         X, y
     )
     assert "imblearn" not in sys.modules
+
+
+def test_load_without_sampling_strategy_generates_nothing_on_refit(tmp_path: Path) -> None:
+    X, y = _pools()
+    backend = FakeBackend(complete_responses=[_canned([_st("new synthetic 1")])])
+    sampler = TypicalPositiveOverSampler(
+        backend=backend, sampling_strategy=_generate(1), batch_size=1
+    )
+    sampler.fit_resample(X, y)
+    path = tmp_path / "synthetic.json"
+    sampler.save(path)
+
+    loaded = TypicalPositiveOverSampler.load(path, backend=FakeBackend())
+    assert loaded.sampling_strategy == {}
+    X_again, _ = loaded.fit_resample(X, y)
+    assert X_again == X

@@ -88,7 +88,7 @@ sampler.generation_result_.rejected           # 棄却された候補と理由
 
 `ClassifyResult`(`.label`/`.confidence`/`__eq__`)による1件ずつの結果表現は廃止し、`predict`/`predict_proba` は sklearn 標準の配列ベース契約に統一する。
 
-0.16.0 で `OverSampler` → `HardPositiveOverSampler`、`SyntheticSampler` → `TypicalPositiveOverSampler`、`n_synthesized`/`seed` → `sampling_strategy`/`random_state` に改名した。旧名は `DeprecationWarning` 付きで 0.17.x まで残し、**0.18.0 で削除する**(クラス名は `pntx/pn2t/__init__.py` の PEP 562 `__getattr__`、パラメータは sklearn 慣習の `"deprecated"` センチネル既定値で実装)。
+0.16.0 で `OverSampler` → `HardPositiveOverSampler`、`SyntheticSampler` → `TypicalPositiveOverSampler`、`n_synthesized`/`seed` → `sampling_strategy`/`random_state` に改名し、旧名は `DeprecationWarning` 付きの互換エイリアスとして 0.17.x まで残した。**0.18.0 で旧名を削除済み**(旧クラス名は `ImportError`、旧パラメータは `TypeError`)。
 
 ## アーキテクチャ
 
@@ -169,7 +169,7 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
   3. 完全一致ベースの dedup(`deduplicate=True` がデフォルト。元データ・既に採択した生成物との文字列一致のみを見る — 旧 `pntx/generate.py` にあった n-gram 近似重複除去とは別物で、v1 では使わない)。`TypicalPositiveOverSampler` はこれとは別目的の漏洩検出レイヤーを追加で持つ(下記)。
   4. `sampling_strategy`(既定 `"auto"` でクラスバランスまで)から求めた生成件数に達するまでバッチ生成を繰り返し、上限バッチ数に達したら警告付きで打ち切る。
 - `generation_result_`(`positive_features`/`negative_features`/`boundary_features`/`hard_positives`、pydantic モデル)を fit 後に公開。`save(path)`/`load(path, backend=...)` で JSON へシリアライズ・復元できる(`backend` は除外し、`load` 時に再注入 — 実装は `BaseLLMOverSampler`)。
-- コンストラクタ引数(`batch_size`, `max_examples_per_class`, `deduplicate`, `context_limit`, `language`, `sample_method`, `verbose`, `logger`)は semaxis 版を踏襲しつつ、`llm: BaseLLMClient | str` は `backend: Backend | str` に置き換える(pntx の `_resolve_backend` を再利用)。生成件数・乱数シード(旧 `n_synthesized`/`seed`)は imblearn 流の `sampling_strategy`/`random_state` に置き換えた(旧名は 0.18.0 まで非推奨エイリアス)。加えて `pos_label`(前述の `resolve_binary_labels` に渡す)を追加。
+- コンストラクタ引数(`batch_size`, `max_examples_per_class`, `deduplicate`, `context_limit`, `language`, `sample_method`, `verbose`, `logger`)は semaxis 版を踏襲しつつ、`llm: BaseLLMClient | str` は `backend: Backend | str` に置き換える(pntx の `_resolve_backend` を再利用)。生成件数・乱数シード(旧 `n_synthesized`/`seed`、0.18.0 で削除済み)は imblearn 流の `sampling_strategy`/`random_state` に置き換えた。加えて `pos_label`(前述の `resolve_binary_labels` に渡す)を追加。
 
 ### `pn2t.CounterfactualOverSampler`(`pntx/pn2t/_counterfactual.py`)— 負例の最小編集による反実仮想データ拡張
 
@@ -180,14 +180,13 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 - 候補ごとのチェック順(基底クラスのパイプライン): ① 常に適用 — 形式(pivot にない `->`/`→` を含む = `changed_spans` の書式をテキストに混ぜた。qwen2.5-7B で実際に起きた)、no-op、最小性(`pntx.dedup.edit_ratio` が `max_edit_ratio` 以下、暫定既定 0.5)、`verify="self"` の自己判定 ② `deduplicate=True` のとき完全一致 dedup ③ 分類器による検証(バッチ単位)。棄却理由は `generation_result_.rejected` に残す。
 - `verify` は `"none"`/`"self"`/`predict` を持つ分類器で、**既定は `"self"`**(パイロットベンチマーク `benchmarks/pn2t/counterfactual_pilot.py` で決定。結果はアイデアファイル参照: `"self"` は追加コストなしで `"none"` より精度が高く、難しい正しい編集を失わない。分類器は精度最高だが簡単な編集ばかり残す)。分類器の場合は `verify_cv`(既定 5)で `StratifiedGroupKFold`(同一テキストは同じ fold)によるクロスフィッティング: 各編集は自分の pivot を学習していない `clone(verify)` で判定し、clone は必要な fold の分だけ遅延 fit、渡されたインスタンス自体は fit しない。`verify_cv="prefit"` は渡された分類器をそのまま使う(`CalibratedClassifierCV(cv="prefit")` と同じ流儀)。
 - LLM の出力スキーマ(`CounterfactualBatch`、`pivot_id` はバッチ内番号)と保存する結果(`CounterfactualGenerationResult`、`source_index` は `X` の添字)は別モデル。そのため基底クラスは結果型・バッチ型・アイテム型の3つの型パラメータを持つ。
-- 0.16.0 の非推奨パラメータ(`n_synthesized`/`seed`)は受け付けない(新クラスなので)。
 
 ### `pn2t.TypicalPositiveOverSampler`(`pntx/pn2t/_typical_positive.py`)— 具体情報を一般化した典型的な正例の生成
 
 - `HardPositiveOverSampler` とは独立したクラス(モード/パラメータではない)。目的関数が逆: `HardPositiveOverSampler` は境界を突く hard positive、`TypicalPositiveOverSampler` は典型的・平均的な positive を、原文の具体的な情報(固有名詞・人名・日付・数値・場所など)を含まないよう生成する。ユースケースはプライバシー上公開できない元テキストプールの代わりに、分布を代表する合成データセットを公開すること。ただし正例を生成プロンプトにそのまま入れるので差分プライバシーではなく、クラス名・ドキュメントで「匿名化」を約束しない(形式的保証が必要なら Aug-PE や DP fine-tuning を案内する)。
 - `resolve_backend`・`LLMEstimatorMixin`(`pntx/_sklearn.py`、`clone()` 互換性用途で `t2pn.LLMPromptingClassifier` とも共有 — `save`/`load` とは無関係、上記参照)・`selection.sample_group`/`_SAMPLE_METHODS`・`pn2t._structured.complete_structured` など、`HardPositiveOverSampler` と同じ共有インフラ(`BaseLLMOverSampler`)の上に構築する。
 - `fit_resample(X, y)` は `HardPositiveOverSampler` と同じ契約(二値ラベル、両クラス最低1件)を維持するが、**negative 側はラベル検証にのみ使い、生成プロンプトには含めない**(境界フレーミングを避けるため、かつ「positive に本質的 vs この1例に固有」の判断は複数の positive exemplar の共通性から行えるため)。
-- `sampling_strategy` に `HardPositiveOverSampler` のような既定値(`"auto"`)はない(自然な目標がないため)。**デフォルトなしの必須パラメータ**にする(シグネチャ上は非推奨の `n_synthesized` を受け付けるため `None` 既定で、どちらも無ければ `fit_resample` で `ValueError`)。
+- `sampling_strategy` に `HardPositiveOverSampler` のような既定値(`"auto"`)はない(自然な目標がないため)。**デフォルトなしの必須パラメータ**にする(未指定はコンストラクタで `TypeError`)。ただし `load()` は保存済み結果を読むだけで目標件数を決めさせないよう `sampling_strategy={}`(どのクラスも対象にしない = 再 fit しても0件生成)を既定にする。
 - exemplar サンプリングは positive 側のみ(`HardPositiveOverSampler` の pos/neg 予算折半・バランス調整ロジックは不要)。token budget は `context_limit - overhead - max_tokens`(`HardPositiveOverSampler` と異なり `// 2` しない)。
 - 具体情報の除去はプロンプト指示だけでなく、`pntx.dedup.contains_verbatim_span(text, sources, min_len)` によるベストエフォートの漏洩検出でも担保する: 生成テキストが positive プールから `min_verbatim_span`(デフォルト20文字)以上の連続部分文字列をそのままコピーしていたら reject してリトライする。これは `HardPositiveOverSampler` の完全一致 dedup とも旧 n-gram 近似重複除去とも別物(近似重複検出ではなく漏洩検出が目的、パラフレーズされた漏洩までは検出できないヒューリスティック)。
 - `generation_result_`(`style_features`/`content_features`/`synthetic_texts`、pydantic モデル)を fit 後に公開。各 `synthetic_texts[].generalized_from` は「何を一般化したかの種類」の監査ログであり、元の具体的内容そのものを含めないようプロンプトで明示的に禁止する(この監査フィールド自体が漏洩経路にならないようにするため)。`save`/`load` は `BaseLLMOverSampler` の共通実装(`backend` を除外、`load(path, backend=...)` で再注入)。
@@ -221,7 +220,7 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 - `pn2t.HardPositiveOverSampler`: 「boundary feature 分析 → hard positive 生成 → dedup で棄却 → リトライ → 上限到達で警告」の分岐を必ずカバー。`sampling_strategy="auto"` のクラスバランス自動計算、`save`/`load` の往復も対象。
 - `pn2t.TypicalPositiveOverSampler`: `HardPositiveOverSampler` と同様の分岐に加え、negative 側がプロンプトに含まれないことの直接検証、`contains_verbatim_span` による漏洩 dedup(reject → リトライ、`min_verbatim_span` 可変、`deduplicate=False` で無効化されること)を必ずカバー。
 - `pn2t.CounterfactualOverSampler`: 最小編集の受理(日本語・英語)、`max_edit_ratio` 超過・no-op・形式不正・完全一致重複・不正な `pivot_id` の棄却とリトライ、正例が pivot にならないこと、`verify` の3方式、クロスフィッティング(各編集を判定する clone の学習データに pivot も生成物も含まれない、渡したインスタンスは fit されない、`"prefit"` は clone/fit しない、K が小さい方のクラス件数を超えると `ValueError`)。LLM 出力は pivot に依存するので、テストはプロンプトから pivot を読み取って編集を返す fake backend を使う。
-- `pn2t` 共通(`BaseLLMOverSampler`): `sampling_strategy` の各形式(文字列・float・dict・callable)が imblearn の over-sampling と同じ件数を返すこと、不正値・negative 側の生成要求で `ValueError` になること、`random_state` の int/`RandomState`、旧クラス名・旧パラメータの `DeprecationWarning` と互換動作(0.18.0 の削除時にこれらのテストも消す)。
+- `pn2t` 共通(`BaseLLMOverSampler`): `sampling_strategy` の各形式(文字列・float・dict・callable)が imblearn の over-sampling と同じ件数を返すこと、不正値・negative 側の生成要求で `ValueError` になること、`random_state` の int/`RandomState`、0.18.0 で削除した旧クラス名・旧パラメータが確実に使えないこと(`ImportError`/`TypeError`)。
 - dedup(完全一致・`contains_verbatim_span`)は日本語・英語両方のケースを入れる。
 - 旧仕様にあった「片側のプールだけで fit → generate(verify=False)」のスモークテストは廃止(前提の通り、両クラス1件以上が必須になったため)。
 

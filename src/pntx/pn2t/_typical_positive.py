@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 import random
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -10,13 +11,15 @@ from .. import dedup
 from ..backends.base import Backend
 from . import prompts
 from ._base import (
-    DEPRECATED,
     PROMPT_OVERHEAD,
     BaseLLMOverSampler,
     SamplingStrategy,
     _Logger,
 )
 from ._types import SyntheticGenerationResult, SyntheticText
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 __all__ = ["TypicalPositiveOverSampler"]
 
@@ -26,8 +29,7 @@ class TypicalPositiveOverSampler(
 ):
     """LLM-based over-sampler that generates typical, representative
     positives with specific details generalized away (positive/negative →
-    text, "pn2t"). (Named ``SyntheticSampler`` before 0.16.0; that name
-    remains as a deprecated alias.)
+    text, "pn2t"). (Named ``SyntheticSampler`` before 0.16.0.)
 
     Unlike ``HardPositiveOverSampler`` (which generates *hard positives* --
     boundary-adjacent texts meant to challenge a classifier -- for data
@@ -92,9 +94,6 @@ class TypicalPositiveOverSampler(
     defaults to ``0.0``) since generation benefits from varied output across
     batches, whereas classification should be as deterministic as possible.
 
-    ``n_synthesized`` and ``seed`` are deprecated aliases (since 0.16.0,
-    removed in 0.18.0) for ``sampling_strategy`` and ``random_state``.
-
     Fitted attributes:
         generation_result_: Full LLM response including style/content
             feature analysis and, for each generated text, a note on what
@@ -121,13 +120,12 @@ class TypicalPositiveOverSampler(
     _batch_model = SyntheticGenerationResult
     _progress_desc = "Generating typical positives"
     _items_name = "typical positives"
-    _default_sampling_strategy = None
 
     def __init__(
         self,
         backend: Backend | str,
         *,
-        sampling_strategy: SamplingStrategy | None = None,
+        sampling_strategy: SamplingStrategy,
         backend_kwargs: dict[str, Any] | None = None,
         batch_size: int = 3,
         max_examples: int | None = None,
@@ -143,12 +141,9 @@ class TypicalPositiveOverSampler(
         verbose: bool = False,
         logger: _Logger | None = None,
         pos_label: Any = None,
-        n_synthesized: int | str = DEPRECATED,
-        seed: int | None | str = DEPRECATED,
     ) -> None:
-        """``sampling_strategy`` is required (``None`` only so the deprecated
-        ``n_synthesized`` can stand in for it until 0.18.0); ``fit_resample``
-        raises ``ValueError`` if neither is given.
+        """``sampling_strategy`` is required (there is no natural default
+        target size), e.g. ``{pos_label: n_positive_after_resampling}``.
 
         ``pos_label`` says which of the two values in ``fit_resample``'s
         ``y`` means "positive"; ``None`` (default) auto-resolves it
@@ -173,8 +168,18 @@ class TypicalPositiveOverSampler(
         self.verbose = verbose
         self.logger = logger
         self.pos_label = pos_label
-        self.n_synthesized = n_synthesized
-        self.seed = seed
+
+    @classmethod
+    def load(cls, path: str | os.PathLike[str], backend: Backend | str, **kwargs: Any) -> Self:
+        """Load fitted state written by :meth:`save` (see the base class).
+
+        ``sampling_strategy`` defaults to ``{}`` here -- a target for no
+        class, i.e. generate nothing if ``fit_resample`` is called again --
+        so loading saved results doesn't force choosing a target size. Pass
+        one explicitly to resume generating.
+        """
+        kwargs.setdefault("sampling_strategy", {})
+        return super().load(path, backend, **kwargs)
 
     def _validate_extra_params(self) -> None:
         if self.max_examples is not None and self.max_examples < 1:
