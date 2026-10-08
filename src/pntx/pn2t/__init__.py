@@ -3,10 +3,15 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
+from ._counterfactual import CounterfactualOverSampler
 from ._hard_positive import HardPositiveOverSampler
 from ._typical_positive import TypicalPositiveOverSampler
 
-__all__ = ["HardPositiveOverSampler", "TypicalPositiveOverSampler"]
+__all__ = [
+    "CounterfactualOverSampler",
+    "HardPositiveOverSampler",
+    "TypicalPositiveOverSampler",
+]
 
 # Names kept importable for backward compatibility (deprecated in 0.16.0,
 # removed in 0.18.0). Resolved lazily via PEP 562 so the warning fires on

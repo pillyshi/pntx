@@ -5,7 +5,7 @@
 `pntx` は、ユーザが与える positive / negative の2つのテキストプールを学習素材として、
 
 1. **`t2pn`**(text → positive/negative): 任意のテキストを positive / negative に分類する。目的の異なる複数の **scikit-learn Classifier**(`BaseEstimator` + `ClassifierMixin`、共通の `(X, y)` 契約)を持つ: LLM プロンプティングでその場で分類する `LLMPromptingClassifier`(学習なし、旧 `Classifier`)と、事前学習済みエンコーダを実際に fine-tuning する `FineTuningClassifier`(既定は multilingual BERT だが、`transformers` の `AutoModelForSequenceClassification` 経由なので特定のアーキテクチャに縛られない)。
-2. **`pn2t`**(positive/negative → text): 指定した側(正例)のテキストを新たに生成する。**imbalanced-learn 流の over-sampler ファミリー**として実装する(アルゴリズムごとに1クラス、`<Name>OverSampler` 命名、共通基底 `BaseLLMOverSampler` — 後述)。現在は目的の異なる2クラスを持つ: `HardPositiveOverSampler`(分類器学習データ拡張用の hard positive 生成)と `TypicalPositiveOverSampler`(データ公開用途の、具体情報を一般化した典型的な正例の生成)。
+2. **`pn2t`**(positive/negative → text): 指定した側(正例)のテキストを新たに生成する。**imbalanced-learn 流の over-sampler ファミリー**として実装する(アルゴリズムごとに1クラス、`<Name>OverSampler` 命名、共通基底 `BaseLLMOverSampler` — 後述)。現在は目的の異なる3クラスを持つ: `HardPositiveOverSampler`(分類器学習データ拡張用の hard positive 生成)、`CounterfactualOverSampler`(既存の負例を最小編集して正例にする反実仮想データ拡張)、`TypicalPositiveOverSampler`(データ公開用途の、具体情報を一般化した典型的な正例の生成)。
 
 の2コンポーネントを提供する Python ライブラリ。両者は同じ `pntx/backends/` を共有するが、公開 API 上は独立したクラスであり、両者を束ねるファサードクラスは持たない。
 
@@ -73,6 +73,17 @@ sampler = TypicalPositiveOverSampler(backend=..., sampling_strategy={1: n_pos + 
 
 X_syn, y_syn = sampler.fit_resample(X, y)     # negative は検証にのみ使い、プロンプトには含めない
 sampler.generation_result_.synthetic_texts    # 生成テキスト + 監査用の generalized_from(何を一般化したか)
+
+# --- pn2t: 負例の最小編集による反実仮想データ拡張 (CounterfactualOverSampler) ---
+from pntx.pn2t import CounterfactualOverSampler
+
+sampler = CounterfactualOverSampler(
+    backend=...,
+    verify=LLMPromptingClassifier(backend=...),  # 必須: "none" / "self" / 分類器(既定 verify_cv=5 でクロスフィッティング)
+)
+X_cf, y_cf = sampler.fit_resample(X, y)       # 各正例は既存の負例(pivot)の最小編集。pivot は X にあるのでペアになる
+sampler.generation_result_.edits              # source_index/source_text → text、changed_spans、edit_ratio
+sampler.generation_result_.rejected           # 棄却された候補と理由
 ```
 
 `ClassifyResult`(`.label`/`.confidence`/`__eq__`)による1件ずつの結果表現は廃止し、`predict`/`predict_proba` は sklearn 標準の配列ベース契約に統一する。
@@ -160,6 +171,17 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 - `generation_result_`(`positive_features`/`negative_features`/`boundary_features`/`hard_positives`、pydantic モデル)を fit 後に公開。`save(path)`/`load(path, backend=...)` で JSON へシリアライズ・復元できる(`backend` は除外し、`load` 時に再注入 — 実装は `BaseLLMOverSampler`)。
 - コンストラクタ引数(`batch_size`, `max_examples_per_class`, `deduplicate`, `context_limit`, `language`, `sample_method`, `verbose`, `logger`)は semaxis 版を踏襲しつつ、`llm: BaseLLMClient | str` は `backend: Backend | str` に置き換える(pntx の `_resolve_backend` を再利用)。生成件数・乱数シード(旧 `n_synthesized`/`seed`)は imblearn 流の `sampling_strategy`/`random_state` に置き換えた(旧名は 0.18.0 まで非推奨エイリアス)。加えて `pos_label`(前述の `resolve_binary_labels` に渡す)を追加。
 
+### `pn2t.CounterfactualOverSampler`(`pntx/pn2t/_counterfactual.py`)— 負例の最小編集による反実仮想データ拡張
+
+設計の根拠と未決事項は `research/ideas/counterfactual-edit-sampler.md`(Kaushik et al. 2020 / Gardner et al. 2020 のノート参照)。
+
+- 既存の**負例を pivot として**、正例ラベルが当てはまるようにする最小編集を LLM に作らせる(Kaushik et al. の3条件: ラベルが反転する・一貫性を保つ・不要な変更をしない)。pivot は元々 `X` にあるので、編集後の正例を末尾に足すだけで「元の例と反実仮想」のペアになる。**生成するのは正例のみ**で、正例 → 負例の編集はスコープ外(negative 側生成と同じ扱い)。
+- 正例はプロンプトに**参照例としてだけ**入れる(正例の意味はユーザ定義なので、何に向けて編集するかを LLM に示す必要がある)。正例は pivot にしない。pivot は負例から `sample_method` で予算内に非復元抽出し、全負例を試し終えてから再利用する。
+- 候補ごとのチェック順(基底クラスのパイプライン): ① 常に適用 — 形式(pivot にない `->`/`→` を含む = `changed_spans` の書式をテキストに混ぜた。qwen2.5-7B で実際に起きた)、no-op、最小性(`pntx.dedup.edit_ratio` が `max_edit_ratio` 以下、暫定既定 0.5)、`verify="self"` の自己判定 ② `deduplicate=True` のとき完全一致 dedup ③ 分類器による検証(バッチ単位)。棄却理由は `generation_result_.rejected` に残す。
+- `verify` は**既定なしの必須パラメータ**(`"none"`/`"self"`/`predict` を持つ分類器)。既定はパイロットベンチマークで決める(後から既定を足すのは非破壊、変えるのは破壊的なので、それまで既定を置かない)。分類器の場合は `verify_cv`(既定 5)で `StratifiedGroupKFold`(同一テキストは同じ fold)によるクロスフィッティング: 各編集は自分の pivot を学習していない `clone(verify)` で判定し、clone は必要な fold の分だけ遅延 fit、渡されたインスタンス自体は fit しない。`verify_cv="prefit"` は渡された分類器をそのまま使う(`CalibratedClassifierCV(cv="prefit")` と同じ流儀)。
+- LLM の出力スキーマ(`CounterfactualBatch`、`pivot_id` はバッチ内番号)と保存する結果(`CounterfactualGenerationResult`、`source_index` は `X` の添字)は別モデル。そのため基底クラスは結果型・バッチ型・アイテム型の3つの型パラメータを持つ。
+- 0.16.0 の非推奨パラメータ(`n_synthesized`/`seed`)は受け付けない(新クラスなので)。
+
 ### `pn2t.TypicalPositiveOverSampler`(`pntx/pn2t/_typical_positive.py`)— 具体情報を一般化した典型的な正例の生成
 
 - `HardPositiveOverSampler` とは独立したクラス(モード/パラメータではない)。目的関数が逆: `HardPositiveOverSampler` は境界を突く hard positive、`TypicalPositiveOverSampler` は典型的・平均的な positive を、原文の具体的な情報(固有名詞・人名・日付・数値・場所など)を含まないよう生成する。ユースケースはプライバシー上公開できない元テキストプールの代わりに、分布を代表する合成データセットを公開すること。ただし正例を生成プロンプトにそのまま入れるので差分プライバシーではなく、クラス名・ドキュメントで「匿名化」を約束しない(形式的保証が必要なら Aug-PE や DP fine-tuning を案内する)。
@@ -198,6 +220,7 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 - `t2pn.FineTuningClassifier`: 事前学習済みチェックポイントのダウンロードなしでユニットテストを完結させるため、`transformers` の `AutoConfig`(小さい `hidden_size`/`num_hidden_layers` 等)からランダム初期化した極小モデルで `fit`/`predict`/`predict_proba`・`Pipeline`/`cross_val_score` 互換・`save`/`load` を検証する(開発環境によっては huggingface.co 等の外部ホストに到達できない場合があるため、実在の事前学習済みチェックポイントのダウンロードを伴う確認は `tests/integration/` 側に分離する)。`class_weight`(`None`/`"balanced"`/dict)の重み計算が正しいこと、不正な値で `ValueError` になることも対象。
 - `pn2t.HardPositiveOverSampler`: 「boundary feature 分析 → hard positive 生成 → dedup で棄却 → リトライ → 上限到達で警告」の分岐を必ずカバー。`sampling_strategy="auto"` のクラスバランス自動計算、`save`/`load` の往復も対象。
 - `pn2t.TypicalPositiveOverSampler`: `HardPositiveOverSampler` と同様の分岐に加え、negative 側がプロンプトに含まれないことの直接検証、`contains_verbatim_span` による漏洩 dedup(reject → リトライ、`min_verbatim_span` 可変、`deduplicate=False` で無効化されること)を必ずカバー。
+- `pn2t.CounterfactualOverSampler`: 最小編集の受理(日本語・英語)、`max_edit_ratio` 超過・no-op・形式不正・完全一致重複・不正な `pivot_id` の棄却とリトライ、正例が pivot にならないこと、`verify` の3方式、クロスフィッティング(各編集を判定する clone の学習データに pivot も生成物も含まれない、渡したインスタンスは fit されない、`"prefit"` は clone/fit しない、K が小さい方のクラス件数を超えると `ValueError`)。LLM 出力は pivot に依存するので、テストはプロンプトから pivot を読み取って編集を返す fake backend を使う。
 - `pn2t` 共通(`BaseLLMOverSampler`): `sampling_strategy` の各形式(文字列・float・dict・callable)が imblearn の over-sampling と同じ件数を返すこと、不正値・negative 側の生成要求で `ValueError` になること、`random_state` の int/`RandomState`、旧クラス名・旧パラメータの `DeprecationWarning` と互換動作(0.18.0 の削除時にこれらのテストも消す)。
 - dedup(完全一致・`contains_verbatim_span`)は日本語・英語両方のケースを入れる。
 - 旧仕様にあった「片側のプールだけで fit → generate(verify=False)」のスモークテストは廃止(前提の通り、両クラス1件以上が必須になったため)。

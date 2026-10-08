@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from difflib import SequenceMatcher
 
 NGRAM_SIZE = 3
 SIMILARITY_THRESHOLD = 0.75
@@ -58,3 +59,19 @@ def contains_verbatim_span(text: str, sources: Iterable[str], min_len: int = 20)
         if len(source) >= min_len
         for i in range(len(text) - min_len + 1)
     )
+
+
+def edit_ratio(source: str, edited: str) -> float:
+    """Fraction of ``source`` that changed in ``edited``, in ``[0, 1]``.
+
+    ``1 - difflib.SequenceMatcher.ratio()`` over characters: ``0.0`` for
+    identical strings, ``1.0`` for strings sharing no characters in order.
+    Character-based (not word-based) for the same reason as the rest of this
+    module -- it works for Japanese and English alike. Used as the
+    minimality check for counterfactual edits; ``autojunk`` is disabled so
+    long texts with repeated characters aren't scored as more different than
+    they are.
+    """
+    if source == edited:
+        return 0.0
+    return 1.0 - SequenceMatcher(None, source, edited, autojunk=False).ratio()

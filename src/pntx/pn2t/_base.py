@@ -51,6 +51,7 @@ class _HasText(Protocol):
 
 
 ResultT = TypeVar("ResultT", bound=BaseModel)
+BatchT = TypeVar("BatchT", bound=BaseModel)
 ItemT = TypeVar("ItemT", bound=_HasText)
 
 
@@ -193,16 +194,35 @@ def make_rng(random_state: Any) -> random.Random:
     )
 
 
-class BaseLLMOverSampler(LLMEstimatorMixin, BaseEstimator, Generic[ResultT, ItemT]):  # type: ignore[misc]
+class BaseLLMOverSampler(
+    LLMEstimatorMixin,
+    BaseEstimator,  # type: ignore[misc]
+    Generic[ResultT, BatchT, ItemT],
+):
     """Shared machinery for pn2t's LLM-based over-samplers.
 
     Plays the role of imbalanced-learn's ``BaseOverSampler``: subclasses
     implement one generation algorithm each (``HardPositiveOverSampler``,
-    ``TypicalPositiveOverSampler``, ...) and only supply the prompt, the
-    pydantic result schema, and any extra acceptance filter. Everything else
-    -- ``sampling_strategy``/``random_state`` resolution, label handling,
-    the batch-generation/retry loop, exact-match dedup, ``save``/``load`` --
-    lives here.
+    ``TypicalPositiveOverSampler``, ``CounterfactualOverSampler``, ...) and
+    only supply the prompt, the pydantic schemas, and any extra acceptance
+    filter. Everything else -- ``sampling_strategy``/``random_state``
+    resolution, label handling, the batch-generation/retry loop, exact-match
+    dedup, ``save``/``load`` -- lives here.
+
+    Type parameters: ``ResultT`` is the fitted ``generation_result_`` model
+    (what ``save``/``load`` round-trip), ``BatchT`` the schema the LLM must
+    return for one batch (often the same model), and ``ItemT`` one generated
+    item (anything with a ``text`` attribute).
+
+    Each candidate item goes through, in order:
+
+    1. ``_validity_reason`` -- always applied (e.g. a minimality check);
+    2. exact-match dedup against ``X`` and already-accepted texts, then
+       ``_dedup_extra_reason`` -- only when ``deduplicate=True``;
+    3. ``_verify_candidates`` -- one call per batch on the survivors, for
+       checks that are expensive per call (e.g. a classifier ``predict``).
+
+    Rejected items are passed to ``_record_rejection`` with a short reason.
 
     Not meant to be instantiated directly. Subclasses define their own
     ``__init__`` listing every parameter explicitly (sklearn's ``get_params``
@@ -211,6 +231,7 @@ class BaseLLMOverSampler(LLMEstimatorMixin, BaseEstimator, Generic[ResultT, Item
 
     # Set by subclasses.
     _result_model: ClassVar[type[BaseModel]]
+    _batch_model: ClassVar[type[BaseModel]]
     _progress_desc: ClassVar[str]
     _items_name: ClassVar[str]
     _default_sampling_strategy: ClassVar[str | None]
@@ -241,6 +262,19 @@ class BaseLLMOverSampler(LLMEstimatorMixin, BaseEstimator, Generic[ResultT, Item
     def _validate_extra_params(self) -> None:
         """Validate subclass-specific parameters; raise ``ValueError``."""
 
+    def _prepare_fit(
+        self,
+        X: list[str],
+        y: list[Any],
+        *,
+        positive_label: Any,
+        negative_label: Any,
+        random_state: Any,
+    ) -> None:
+        """Per-fit setup that needs the data (called before generation, even
+        when nothing is to be generated, so data-dependent validation always
+        runs)."""
+
     def _exemplar_budget(self) -> int:
         """Token budget for one side's exemplars in a single prompt."""
         raise NotImplementedError
@@ -269,20 +303,33 @@ class BaseLLMOverSampler(LLMEstimatorMixin, BaseEstimator, Generic[ResultT, Item
         """Return ``(system, user)`` messages for one batch."""
         raise NotImplementedError
 
-    def _merge_batch_analysis(self, result: ResultT) -> None:
+    def _merge_batch_analysis(self, result: BatchT) -> None:
         """Fold one batch's analysis fields into ``generation_result_``."""
         raise NotImplementedError
 
-    def _batch_items(self, result: ResultT) -> list[ItemT]:
+    def _batch_items(self, result: BatchT) -> list[ItemT]:
+        """Candidate items of one batch, converted to ``ItemT``."""
         raise NotImplementedError
 
     def _accepted_items(self) -> list[ItemT]:
         """The list inside ``generation_result_`` that accepted items go to."""
         raise NotImplementedError
 
-    def _passes_extra_checks(self, text: str, pos_texts: list[str]) -> bool:
-        """Extra acceptance filter, applied only when ``deduplicate=True``."""
-        return True
+    def _validity_reason(self, item: ItemT) -> str | None:
+        """Rejection reason applied regardless of ``deduplicate``; ``None`` = ok."""
+        return None
+
+    def _dedup_extra_reason(self, item: ItemT, pos_texts: list[str]) -> str | None:
+        """Extra rejection reason, applied only when ``deduplicate=True``."""
+        return None
+
+    def _verify_candidates(self, items: list[ItemT]) -> list[str | None]:
+        """Batch-level check on items that passed every other filter; returns
+        one rejection reason (or ``None``) per item."""
+        return [None] * len(items)
+
+    def _record_rejection(self, item: ItemT, reason: str) -> None:
+        """Called for every rejected candidate (default: discard)."""
 
     # ---- shared implementation ------------------------------------------
 
@@ -337,6 +384,14 @@ class BaseLLMOverSampler(LLMEstimatorMixin, BaseEstimator, Generic[ResultT, Item
                     "tqdm is required when verbose=True. Install it with: pip install tqdm"
                 ) from None
 
+        self._prepare_fit(
+            list(X),
+            y_list,
+            positive_label=positive_label,
+            negative_label=negative_label,
+            random_state=random_state,
+        )
+
         self.generation_result_ = self._new_result()
         if target_count == 0:
             return list(X), y_list
@@ -368,12 +423,12 @@ class BaseLLMOverSampler(LLMEstimatorMixin, BaseEstimator, Generic[ResultT, Item
                 )
                 try:
                     result = cast(
-                        "ResultT",
+                        "BatchT",
                         complete_structured(
                             self.backend_,
                             system,
                             user,
-                            self._result_model,
+                            self._batch_model,
                             temperature=self.temperature,
                             max_tokens=self.max_tokens,
                         ),
@@ -396,15 +451,20 @@ class BaseLLMOverSampler(LLMEstimatorMixin, BaseEstimator, Generic[ResultT, Item
                     or self.logger.isEnabledFor(logging.DEBUG)
                 )
                 n_before = len(accepted)
-                for item in self._batch_items(result):
+                candidates = self._batch_items(result)
+                reasons = self._screen_candidates(
+                    candidates, pos_texts, original_texts, accepted_texts
+                )
+                for item, reason in zip(candidates, reasons, strict=True):
                     if len(accepted) >= target_count:
                         break
-                    if self._accept_generated_text(
-                        item.text, pos_texts, original_texts, accepted_texts
-                    ):
-                        accepted.append(item)
-                        if pbar is not None:
-                            pbar.update(1)
+                    if reason is not None:
+                        self._record_rejection(item, reason)
+                        continue
+                    accepted.append(item)
+                    accepted_texts.add(item.text)
+                    if pbar is not None:
+                        pbar.update(1)
                 if debug_log:
                     self.logger.debug(  # type: ignore[union-attr]
                         f"Batch {batch_idx + 1}/{max_batches}: accepted "
@@ -541,18 +601,42 @@ class BaseLLMOverSampler(LLMEstimatorMixin, BaseEstimator, Generic[ResultT, Item
             sampled = rng.sample(sampled, limit)
         return sampled
 
-    def _accept_generated_text(
+    def _screen_candidates(
         self,
-        text: str,
+        candidates: list[ItemT],
         pos_texts: list[str],
         original_texts: set[str],
         accepted_texts: set[str],
-    ) -> bool:
-        if not self.deduplicate:
-            return True
-        if text in original_texts or text in accepted_texts:
-            return False
-        if not self._passes_extra_checks(text, pos_texts):
-            return False
-        accepted_texts.add(text)
-        return True
+    ) -> list[str | None]:
+        """One rejection reason (or ``None``) per candidate; see the class
+        docstring for the order checks run in. Cheap per-item checks run
+        first so ``_verify_candidates`` only sees items that would otherwise
+        be accepted."""
+        reasons: list[str | None] = []
+        seen_in_batch: set[str] = set()
+        for item in candidates:
+            reason = self._validity_reason(item)
+            if reason is None and self.deduplicate:
+                if (
+                    item.text in original_texts
+                    or item.text in accepted_texts
+                    or item.text in seen_in_batch
+                ):
+                    reason = "duplicate"
+                else:
+                    reason = self._dedup_extra_reason(item, pos_texts)
+            if reason is None:
+                seen_in_batch.add(item.text)
+            reasons.append(reason)
+
+        pending = [i for i, reason in enumerate(reasons) if reason is None]
+        if pending:
+            verdicts = self._verify_candidates([candidates[i] for i in pending])
+            if len(verdicts) != len(pending):
+                raise RuntimeError(
+                    "_verify_candidates must return one verdict per item, got "
+                    f"{len(verdicts)} for {len(pending)}"
+                )
+            for i, verdict in zip(pending, verdicts, strict=True):
+                reasons[i] = verdict
+        return reasons

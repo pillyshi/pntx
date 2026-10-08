@@ -20,7 +20,9 @@ from ._types import HardPositive, HardPositiveGenerationResult
 __all__ = ["HardPositiveOverSampler"]
 
 
-class HardPositiveOverSampler(BaseLLMOverSampler[HardPositiveGenerationResult, HardPositive]):
+class HardPositiveOverSampler(
+    BaseLLMOverSampler[HardPositiveGenerationResult, HardPositiveGenerationResult, HardPositive]
+):
     """LLM-based over-sampler that generates hard positives for binary
     classification (positive/negative → text, "pn2t").
 
@@ -113,6 +115,7 @@ class HardPositiveOverSampler(BaseLLMOverSampler[HardPositiveGenerationResult, H
     """
 
     _result_model = HardPositiveGenerationResult
+    _batch_model = HardPositiveGenerationResult
     _progress_desc = "Generating hard positives"
     _items_name = "hard positives"
     _default_sampling_strategy = "auto"

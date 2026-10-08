@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from ._types import HardPositiveGenerationResult, SyntheticGenerationResult
+from ._types import CounterfactualBatch, HardPositiveGenerationResult, SyntheticGenerationResult
 
 SYSTEM = """\
 You are a data augmentation expert.
@@ -155,3 +155,69 @@ def build_synthetic_user_message(
     if language:
         message += _SYNTHETIC_LANGUAGE_INSTRUCTION.format(language=language)
     return message
+
+
+COUNTERFACTUAL_SYSTEM = """\
+You are a counterfactual data editing expert.
+
+You are given reference examples of the Positive class and a numbered list of \
+Negative texts. For each Negative text, make the smallest edit that makes the \
+Positive label clearly apply to it.
+
+Rules (counterfactual revision, after Kaushik et al. 2020):
+- The edited text must clearly belong to the Positive class, as the Positive \
+reference examples define it
+- The edited text must stay coherent and natural
+- Make no unnecessary changes: keep everything not needed to change the label \
+(topic, entities, length, style, wording) exactly as it is
+- Keep the original text's language
+- Do not copy from the Positive reference examples; they only show what \
+Positive means
+
+Typical minimal edits include: replacing or inserting modifiers, negating or \
+removing a negation, recasting a fact as hoped-for (or the reverse), \
+diminishing via qualifiers, adding or removing sarcasm, changing a stated \
+rating or outcome.
+
+Return exactly one edit per Negative text. pivot_id is the number of the \
+Negative text the edit is based on. edited_text is the complete edited text \
+and nothing else -- not the original, no arrows, no explanation. \
+changed_spans lists each change briefly as "original -> edited". \
+is_positive is your honest judgment of whether the edited text now clearly \
+belongs to the Positive class; set it to false if a small edit could not \
+achieve that.
+Respond with a single JSON object matching this schema and nothing else \
+(no prose, no markdown code fences):
+
+{schema}"""
+
+_COUNTERFACTUAL_USER_TEMPLATE = """\
+Positive reference examples:
+{positive_list}
+
+Negative texts to edit:
+{pivot_list}
+
+Count: {n_edits}"""
+
+
+def build_counterfactual_system_message() -> str:
+    """Render ``COUNTERFACTUAL_SYSTEM`` with ``CounterfactualBatch``'s JSON schema inlined."""
+    return COUNTERFACTUAL_SYSTEM.format(schema=json.dumps(CounterfactualBatch.model_json_schema()))
+
+
+def build_counterfactual_user_message(pos_texts: list[str], pivots: list[str]) -> str:
+    """Render the user message for a ``CounterfactualOverSampler`` batch.
+
+    ``pivots`` are the negative texts to edit, numbered from 0 as
+    ``[i]`` so the response's ``pivot_id`` can refer back to them;
+    ``pos_texts`` are shown only as a reference for what "positive" means
+    (they are never edited).
+    """
+    positive_list = "\n".join(f"- {t}" for t in pos_texts) if pos_texts else "(none)"
+    pivot_list = "\n".join(f"[{i}] {t}" for i, t in enumerate(pivots))
+    return _COUNTERFACTUAL_USER_TEMPLATE.format(
+        positive_list=positive_list,
+        pivot_list=pivot_list,
+        n_edits=len(pivots),
+    )

@@ -2,7 +2,31 @@
 
 ## Status
 
-Draft.
+Implemented as `pn2t.CounterfactualOverSampler` (`src/pntx/pn2t/_counterfactual.py`,
+unreleased as of 2026-10-08). `verify` ships **without a default** (required
+parameter) and `max_edit_ratio` with a provisional `0.5`, until the pilot
+benchmark below is run. Open: the pilot itself, and the open questions at the end.
+
+### First real-model observations (2026-10-08, 3 Japanese negatives, not a benchmark)
+
+- **Llama-3.2-1B-Instruct:** mostly unusable for this task in Japanese. Most
+  candidates were rewrites (`edit_too_large`), no-ops, or out-of-range
+  `pivot_id`s, and the filters caught them. What got through shows each
+  `verify` mode's weak spot. With `verify="none"`, it accepted 「冷たかった→寒かった」,
+  which is still negative (the model itself marked it `is_positive=false`). With
+  `verify="self"`, it accepted a truncated 「この映画は」 and 「この映画は無情でした」,
+  which isn't positive, both self-marked positive. So a 1B model's self-check is not
+  reliable.
+- **qwen2.5-7B-Instruct:** clean minimal flips (edit ratio 0.28–0.40), e.g.
+  「この映画は退屈だった→この映画は興奮した」. One label-ambiguous edit passed under
+  `verify="none"`: 「サポートの対応が良かっただけでは足りない」. It also exposed a
+  format bug. Its first run put the `"original -> edited"` changed_spans format
+  into the text field, and that still passed `max_edit_ratio` on short pivots. This
+  was fixed by renaming the LLM field to `edited_text`, adding an explicit prompt
+  rule, and adding a `malformed_text` rejection for arrows not present in the pivot.
+- Takeaway for the pilot: the filters handle *form*, and label validity is
+  where the strategies differ. Include a small model in the pilot, since that is
+  where `"self"` vs. classifier verification should diverge most.
 
 ## Motivation
 

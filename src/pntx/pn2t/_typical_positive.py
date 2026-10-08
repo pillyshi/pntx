@@ -21,7 +21,9 @@ from ._types import SyntheticGenerationResult, SyntheticText
 __all__ = ["TypicalPositiveOverSampler"]
 
 
-class TypicalPositiveOverSampler(BaseLLMOverSampler[SyntheticGenerationResult, SyntheticText]):
+class TypicalPositiveOverSampler(
+    BaseLLMOverSampler[SyntheticGenerationResult, SyntheticGenerationResult, SyntheticText]
+):
     """LLM-based over-sampler that generates typical, representative
     positives with specific details generalized away (positive/negative →
     text, "pn2t"). (Named ``SyntheticSampler`` before 0.16.0; that name
@@ -116,6 +118,7 @@ class TypicalPositiveOverSampler(BaseLLMOverSampler[SyntheticGenerationResult, S
     """
 
     _result_model = SyntheticGenerationResult
+    _batch_model = SyntheticGenerationResult
     _progress_desc = "Generating typical positives"
     _items_name = "typical positives"
     _default_sampling_strategy = None
@@ -235,5 +238,7 @@ class TypicalPositiveOverSampler(BaseLLMOverSampler[SyntheticGenerationResult, S
     def _accepted_items(self) -> list[SyntheticText]:
         return self.generation_result_.synthetic_texts
 
-    def _passes_extra_checks(self, text: str, pos_texts: list[str]) -> bool:
-        return not dedup.contains_verbatim_span(text, pos_texts, min_len=self.min_verbatim_span)
+    def _dedup_extra_reason(self, item: SyntheticText, pos_texts: list[str]) -> str | None:
+        if dedup.contains_verbatim_span(item.text, pos_texts, min_len=self.min_verbatim_span):
+            return "verbatim_leak"
+        return None

@@ -40,3 +40,48 @@ class SyntheticGenerationResult(BaseModel):
     style_features: list[str]
     content_features: list[str]
     synthetic_texts: list[SyntheticText]
+
+
+class CounterfactualEditOutput(BaseModel):
+    """One edit as returned by the LLM (``pivot_id`` indexes the batch's
+    numbered negative texts, not ``X``)."""
+
+    pivot_id: int
+    edited_text: str
+    changed_spans: list[str]
+    is_positive: bool
+
+
+class CounterfactualBatch(BaseModel):
+    """Structured output the LLM must return for one ``CounterfactualOverSampler`` batch."""
+
+    edits: list[CounterfactualEditOutput]
+
+
+class CounterfactualEdit(BaseModel):
+    """One accepted counterfactual edit: ``X[source_index]`` (a negative) minimally
+    edited into ``text`` (a positive)."""
+
+    source_index: int
+    source_text: str
+    text: str
+    changed_spans: list[str]
+    self_assessed_positive: bool
+    edit_ratio: float
+
+
+class RejectedEdit(BaseModel):
+    """A candidate edit that was not accepted, with the reason (for auditing
+    rejection rates per filter/verification strategy)."""
+
+    source_index: int | None
+    source_text: str | None
+    text: str
+    reason: str
+
+
+class CounterfactualGenerationResult(BaseModel):
+    """Full fitted state of a ``CounterfactualOverSampler``."""
+
+    edits: list[CounterfactualEdit]
+    rejected: list[RejectedEdit]

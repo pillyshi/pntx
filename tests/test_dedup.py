@@ -81,3 +81,25 @@ def test_contains_verbatim_span_respects_min_len_threshold() -> None:
     # it isn't flagged, but a low enough threshold catches it.
     assert not dedup.contains_verbatim_span(text, [source], min_len=20)
     assert dedup.contains_verbatim_span(text, [source], min_len=8)
+
+
+def test_edit_ratio_identical_is_zero() -> None:
+    assert dedup.edit_ratio("same text", "same text") == 0.0
+
+
+def test_edit_ratio_disjoint_is_one() -> None:
+    assert dedup.edit_ratio("abc", "xyz") == 1.0
+
+
+def test_edit_ratio_japanese_minimal_edit_is_small() -> None:
+    # One word swapped: 11 of 12/13 characters kept in order.
+    ratio = dedup.edit_ratio("サポートの対応が雑だった", "サポートの対応が丁寧だった")
+    assert 0.0 < ratio < 0.2
+
+
+def test_edit_ratio_english_minimal_edit_is_small_and_rewrite_is_large() -> None:
+    source = "The movie was boring and the ending made no sense."
+    minimal = "The movie was gripping and the ending made perfect sense."
+    rewrite = "Loved every minute, a joy from start to finish!"
+    assert dedup.edit_ratio(source, minimal) < 0.3
+    assert dedup.edit_ratio(source, rewrite) > 0.5

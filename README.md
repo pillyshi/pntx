@@ -8,12 +8,14 @@ into two independent components:
    `positive` or `negative`: **`LLMPromptingClassifier`** classifies via LLM few-shot
    prompting/scoring (no training), and **`FineTuningClassifier`** actually fine-tunes a
    pretrained `transformers` encoder (default: multilingual BERT).
-2. **`pntx.pn2t`** (positive/negative → text) — two
+2. **`pntx.pn2t`** (positive/negative → text) — a family of
    [imbalanced-learn](https://imbalanced-learn.org/)-style over-samplers with different
    goals: **`HardPositiveOverSampler`** generates "hard positive" text to balance an
-   imbalanced dataset for classifier training, and **`TypicalPositiveOverSampler`**
-   generates typical, representative positives with specific details generalized away,
-   for publishing a stand-in for data you can't share as-is.
+   imbalanced dataset for classifier training, **`CounterfactualOverSampler`** minimally
+   edits existing negatives into positives (counterfactually-augmented data), and
+   **`TypicalPositiveOverSampler`** generates typical, representative positives with
+   specific details generalized away, for publishing a stand-in for data you can't
+   share as-is.
 
 The meaning of "positive" and "negative" is entirely up to you. It doesn't have to be
 sentiment — it can be formal/casual, policy-compliant/violating, or any other contrast
@@ -74,6 +76,18 @@ synth = TypicalPositiveOverSampler(
 )
 X_syn, y_syn = synth.fit_resample(X, [1, 1, 0, 0])
 synth.generation_result_.synthetic_texts  # generated texts + what was generalized away for each
+
+# --- pn2t: counterfactual minimal edits of negatives ---
+from pntx.pn2t import CounterfactualOverSampler
+
+cf = CounterfactualOverSampler(
+    backend="llama",
+    backend_kwargs={"model_path": "model.gguf"},
+    verify="self",  # required: "none", "self", or a classifier (see below)
+)
+X_cf, y_cf = cf.fit_resample(X, [1, 1, 0, 0])
+cf.generation_result_.edits     # (source_index, source_text) -> text, with changed spans
+cf.generation_result_.rejected  # rejected candidates and why
 ```
 
 `HardPositiveOverSampler.fit_resample` generates "hard positives" — texts an expert would label
@@ -115,6 +129,32 @@ particular, it is **not differentially private**: positive exemplars go into the
 verbatim. If you need a formal guarantee, use a DP method that keeps private text out of
 the prompt, such as [Aug-PE](https://arxiv.org/abs/2403.01749) (Xie et al., ICML 2024) or
 DP fine-tuning of the generator ([Yue et al., ACL 2023](https://aclanthology.org/2023.acl-long.74/)).
+
+`CounterfactualOverSampler.fit_resample` builds *pairs*: each generated positive is the
+smallest edit of one existing negative (its "pivot") that makes the positive label apply,
+following the counterfactual-revision instructions of
+[Kaushik et al. (ICLR 2020)](https://arxiv.org/abs/1909.12434) — the label must flip,
+the text must stay coherent, nothing else may change. Because the pivot is already in
+`X`, training on the result sees both sides of each minimal change, the mechanism that
+paper shows makes classifiers less reliant on spurious features. Every candidate must
+pass a format check, a no-op check, and a minimality check (`max_edit_ratio`, the
+character-level share of the pivot that changed, default `0.5`), then exact-match dedup,
+then label verification:
+
+- `verify="none"` trusts the edit; `verify="self"` drops edits the LLM itself marks as
+  not positive in the same response (no extra calls, but the editor grades its own
+  work — small models do this poorly).
+- `verify=<classifier>` (e.g. `LLMPromptingClassifier(backend=backend)` on the same
+  loaded model, or a `FineTuningClassifier`) drops edits it doesn't predict positive.
+  It is cross-fitted by default (`verify_cv=5`): each edit is judged by a clone that was
+  never trained on its pivot, since a verifier trained on the very negative it's judging
+  a minimal edit of tends to reject correct flips. `verify_cv="prefit"` uses an
+  already-fitted classifier as-is.
+
+`verify` has no default yet: which strategy works best is to be decided by a pilot
+benchmark. Rejected candidates are kept in `generation_result_.rejected` with a reason
+(`"edit_too_large"`, `"self_check_failed"`, `"verifier_rejected"`, ...) so you can see what
+each filter catches.
 
 > **Renamed in 0.16.0.** `OverSampler` → `HardPositiveOverSampler`, `SyntheticSampler` →
 > `TypicalPositiveOverSampler`, and their `n_synthesized`/`seed` parameters →
@@ -187,7 +227,8 @@ clf = LLMPromptingClassifier(
 
 To share one loaded model across `LLMPromptingClassifier` and the `pn2t` over-samplers
 (recommended for local inference — avoids loading the same GGUF twice), construct the
-backend once and pass the instance to each:
+backend once and pass the instance to each (including as a `CounterfactualOverSampler`
+verifier):
 
 ```python
 from pntx.backends.llama import LlamaCppBackend
@@ -196,6 +237,7 @@ backend = LlamaCppBackend(model_path="model.gguf")
 clf = LLMPromptingClassifier(backend=backend)
 sampler = HardPositiveOverSampler(backend=backend)
 synth = TypicalPositiveOverSampler(backend=backend, sampling_strategy={1: 100})
+cf = CounterfactualOverSampler(backend=backend, verify=LLMPromptingClassifier(backend=backend))
 ```
 
 ## Selecting exemplars
