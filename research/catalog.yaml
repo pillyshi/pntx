@@ -941,6 +941,39 @@ papers:
     openalex: W4393212345
   relevance: to_classify
   priority: to_review
-  rationale: 'Published at LREC-COLING 2024 (pp. 5930-5943); catalogued via the arXiv record because OpenAlex''s LREC record has a corrupted author name. Offline T5 generator shifts latents to the decision boundary and adds soft-labelled sentences for fine-tuning; considered for FineTuningClassifier (research/ideas/soft-label-augmented-finetuning.md), not implemented. No method follow-ups found as of 2026-10-08.'
+  rationale: Published at LREC-COLING 2024 (pp. 5930-5943); catalogued via the arXiv record because OpenAlex's LREC record has a corrupted author name. Offline T5 generator shifts latents to the decision boundary and adds soft-labelled sentences for fine-tuning; considered for FineTuningClassifier (research/ideas/soft-label-augmented-finetuning.md), not implemented. No method follow-ups found as of 2026-10-08.
+  note_status: pending
+  pdf_status: missing
+- key: wei-2019
+  title: 'EDA: Easy Data Augmentation Techniques for Boosting Performance on Text Classification Tasks'
+  authors:
+  - Jason Wei
+  - Kai Zou
+  year: 2019
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/d19-1670
+    openalex: W2971296908
+  relevance: to_classify
+  priority: to_review
+  rationale: 'EDA: synonym replacement / random insertion / swap / deletion; +3.0% avg at N=500, +0.8% on full data (CNN/RNN). Candidate label-preserving baseline for a pn2t downstream benchmark; authors expect little gain with pretrained models.'
+  note_status: pending
+  pdf_status: missing
+- key: longpre-2020
+  title: How Effective is Task-Agnostic Data Augmentation for Pretrained Transformers?
+  authors:
+  - Shayne Longpre
+  - Yu Wang
+  - Christopher DuBois
+  year: 2020
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2020.findings-emnlp.394
+    openalex: W3090260555
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Negative result: EDA and back-translation do not consistently help pretrained transformers (BERT/XLNet/RoBERTa); sets expectations for EDA as a FineTuningClassifier baseline.'
   note_status: pending
   pdf_status: missing
