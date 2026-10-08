@@ -4,7 +4,8 @@ verified_on:
 verification:
   provider: OpenAlex
   client: pyalex
-source_reports: []
+source_reports:
+- reports/2026-10-08-cad-contrast-set-followups-llm.md
 papers:
 - key: chawla-2002
   title: 'SMOTE: Synthetic Minority Over-sampling Technique'
@@ -421,5 +422,486 @@ papers:
   relevance: to_classify
   priority: to_review
   rationale: 't2pn.FineTuningClassifier: default encoder (bert-base-multilingual-cased) and fine-tuning recipe.'
+  note_status: pending
+  pdf_status: missing
+- key: huang-2020
+  title: Counterfactually-Augmented SNLI Training Data Does Not Yield Better Generalization Than Unaugmented Data
+  authors:
+  - William Huang
+  - Haokun Liu
+  - Samuel R. Bowman
+  year: 2020
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2020.insights-1.13
+    openalex: W3103651020
+  relevance: to_classify
+  priority: to_review
+  rationale: 'CAD critique: no gain over same-size unaugmented data on SNLI; benchmarks need that control.'
+  note_status: pending
+  pdf_status: missing
+- key: kaushik-2020
+  title: Explaining The Efficacy of Counterfactually Augmented Data
+  authors:
+  - Divyansh Kaushik
+  - Amrith Setlur
+  - Eduard H. Hovy
+  - Zachary C. Lipton
+  year: 2020
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2010.02114
+    openalex: W3089770252
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Theory for why CAD works (linear-Gaussian toy model); CAD authors'' follow-up.'
+  note_status: pending
+  pdf_status: missing
+- key: joshi-2022
+  title: An Investigation of the (In)effectiveness of Counterfactually Augmented Data
+  authors:
+  - Nitish Joshi
+  - He He
+  year: 2022
+  publication_type: conference-paper
+  venue: Annual Meeting of the Association for Computational Linguistics (ACL)
+  identifiers:
+    doi: 10.18653/v1/2022.acl-long.256
+    openalex: W3177575812
+  relevance: to_classify
+  priority: to_review
+  rationale: 'CAD limits: lack of perturbation diversity; motivates diversifying CounterfactualOverSampler edits.'
+  note_status: pending
+  pdf_status: missing
+- key: sen-2021
+  title: How Does Counterfactually Augmented Data Impact Models for Social Computing Constructs?
+  authors:
+  - Indira Sen
+  - Mattia Samory
+  - Fabian Flöck
+  - Claudia Wagner
+  - Isabelle Augenstein
+  year: 2021
+  publication_type: conference-paper
+  venue: Conference on Empirical Methods in Natural Language Processing (EMNLP)
+  identifiers:
+    doi: 10.18653/v1/2021.emnlp-main.28
+    openalex: W3200232291
+  relevance: to_classify
+  priority: to_review
+  rationale: 'CAD for sentiment/sexism/hate: lower in-domain, better OOD; edit types matter.'
+  note_status: pending
+  pdf_status: missing
+- key: gardner-2021
+  title: 'Competency Problems: On Finding and Removing Artifacts in Language Data'
+  authors:
+  - Matt Gardner
+  - William Merrill
+  - Jesse Dodge
+  - Matthew E. Peters
+  - Alexis Ross
+  - Sameer Kumar Singh
+  - Noah A. Smith
+  year: 2021
+  publication_type: conference-paper
+  venue: Conference on Empirical Methods in Natural Language Processing (EMNLP)
+  identifiers:
+    doi: 10.18653/v1/2021.emnlp-main.135
+    openalex: W3155431862
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Contrast-set authors'' follow-up: competency problems and an artifact test.'
+  note_status: pending
+  pdf_status: missing
+- key: wu-2021
+  title: 'Polyjuice: Generating Counterfactuals for Explaining, Evaluating, and Improving Models'
+  authors:
+  - Tongshuang Wu
+  - Marco Túlio Ribeiro
+  - Jeffrey Heer
+  - Daniel S. Weld
+  year: 2021
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2021.acl-long.523
+    openalex: W3174057701
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Polyjuice: GPT-2 counterfactual generator with perturbation control codes; does not decide labels.'
+  note_status: pending
+  pdf_status: missing
+- key: ross-2021
+  title: Explaining NLP Models via Minimal Contrastive Editing (MiCE)
+  authors:
+  - Alexis Ross
+  - Ana Marasović
+  - Matthew E. Peters
+  year: 2021
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2021.findings-acl.336
+    openalex: W3116103312
+  relevance: to_classify
+  priority: to_review
+  rationale: 'MiCE: minimal contrastive edits for explaining model predictions.'
+  note_status: pending
+  pdf_status: missing
+- key: wen-2022
+  title: 'AutoCAD: Automatically Generate Counterfactuals for Mitigating Shortcut Learning'
+  authors:
+  - Jiaxin Wen
+  - Yeshuang Zhu
+  - Jinchao Zhang
+  - Jie Zhou
+  - Minlie Huang
+  year: 2022
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2022.findings-emnlp.170
+    openalex: W4385573905
+  relevance: to_classify
+  priority: to_review
+  rationale: 'AutoCAD: rationale-guided automatic CAD, comparable to human-in-the-loop CAD.'
+  note_status: pending
+  pdf_status: missing
+- key: howard-2022
+  title: 'NeuroCounterfactuals: Beyond Minimal-Edit Counterfactuals for Richer Data Augmentation'
+  authors:
+  - Phillip Howard
+  - Gadi Singer
+  - Vasudev Lal
+  - Yejin Choi
+  - Swabha Swayamdipta
+  year: 2022
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2022.findings-emnlp.371
+    openalex: W4385573449
+  relevance: to_classify
+  priority: to_review
+  rationale: 'NeuroCounterfactuals: looser, non-minimal counterfactuals can help sentiment augmentation.'
+  note_status: pending
+  pdf_status: missing
+- key: dixit-2022
+  title: 'CORE: A Retrieve-then-Edit Framework for Counterfactual Data Generation'
+  authors:
+  - Tanay Dixit
+  - Bhargavi Paranjape
+  - Hannaneh Hajishirzi
+  - Luke Zettlemoyer
+  year: 2022
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2022.findings-emnlp.216
+    openalex: W4385573369
+  relevance: to_classify
+  priority: to_review
+  rationale: 'CORE: retrieval-conditioned few-shot GPT-3 editing for more diverse counterfactuals.'
+  note_status: pending
+  pdf_status: missing
+- key: chen-2023
+  title: 'DISCO: Distilling Counterfactuals with Large Language Models'
+  authors:
+  - Zeming Chen
+  - Qiyue Gao
+  - Antoine Bosselut
+  - Ashish Sabharwal
+  - Kyle Richardson
+  year: 2023
+  publication_type: conference-paper
+  venue: Annual Meeting of the Association for Computational Linguistics (ACL)
+  identifiers:
+    doi: 10.18653/v1/2023.acl-long.302
+    openalex: W4385569878
+  relevance: to_classify
+  priority: to_review
+  rationale: 'DISCO: LLM perturbations filtered by a teacher model; closest analogue of verify=<classifier>.'
+  note_status: pending
+  pdf_status: missing
+- key: li-2023
+  title: 'Prompting Large Language Models for Counterfactual Generation: An Empirical Study'
+  authors:
+  - Yongqi Li
+  - Mayi Xu
+  - Xin Miao
+  - Shen Zhou
+  - Tieyun Qian
+  year: 2023
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2305.14791
+    openalex: W4378473938
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Empirical study of prompting LLMs for counterfactuals; scaling alone doesn''t help, guidelines do.'
+  note_status: pending
+  pdf_status: missing
+- key: sen-2023
+  title: 'People Make Better Edits: Measuring the Efficacy of LLM-Generated Counterfactually Augmented Data for Harmful Language Detection'
+  authors:
+  - Indira Sen
+  - Dennis Assenmacher
+  - Mattia Samory
+  - Isabelle Augenstein
+  - Wil M. P. van der Aalst
+  - Claudia Wagner
+  year: 2023
+  publication_type: conference-paper
+  venue: Conference on Empirical Methods in Natural Language Processing (EMNLP)
+  identifiers:
+    doi: 10.18653/v1/2023.emnlp-main.649
+    openalex: W4389520396
+  relevance: to_classify
+  priority: to_review
+  rationale: 'LLM vs human CAD for harmful language: humans best, ChatGPT close; automated CAD needs label vetting. Main text read.'
+  note_status: pending
+  pdf_status: missing
+- key: nguyen-2024
+  title: 'LLMs for Generating and Evaluating Counterfactuals: A Comprehensive Study'
+  authors:
+  - Van Bach Nguyen
+  - Paul Youssef
+  - Christin Seifert
+  - Jörg Schlötterer
+  year: 2024
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2024.findings-emnlp.870
+    openalex: W4404780766
+  relevance: to_classify
+  priority: to_review
+  rationale: 'LLM counterfactuals fluent but not minimal; flip harder on NLI/HS; LLM judges agree with given labels. Main text read.'
+  note_status: pending
+  pdf_status: missing
+- key: nguyen-2024-2
+  title: 'CEval: A Benchmark for Evaluating Counterfactual Text Generation'
+  authors:
+  - Van Bach Nguyen
+  - Christin Seifert
+  - Jörg Schlötterer
+  year: 2024
+  publication_type: conference-paper
+  venue: International Natural Language Generation Conference (INLG)
+  identifiers:
+    doi: 10.18653/v1/2024.inlg-main.6
+    openalex: W4411113472
+  relevance: to_classify
+  priority: to_review
+  rationale: 'CEval benchmark for counterfactual text generation metrics.'
+  note_status: pending
+  pdf_status: missing
+- key: wang-2024
+  title: A Survey on Natural Language Counterfactual Generation
+  authors:
+  - Yongjie Wang
+  - Xiaoqi Qiu
+  - Yue Yu
+  - Xu Guo
+  - Zhiwei Zeng
+  - Yuhong Feng
+  - Zhiqi Shen
+  year: 2024
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2024.findings-emnlp.276
+    openalex: W4404781902
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Survey of natural-language counterfactual generation, LLM-focused taxonomy.'
+  note_status: pending
+  pdf_status: missing
+- key: gat-2023
+  title: Faithful Explanations of Black-box NLP Models Using LLM-generated Counterfactuals
+  authors:
+  - Yair Ori Gat
+  - Nitay Calderon
+  - Amir Feder
+  - Alexander Chapanin
+  - Amit Kumar Sharma
+  - Roi Reichart
+  year: 2023
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2310.00603
+    openalex: W4387323731
+  relevance: to_classify
+  priority: to_review
+  rationale: 'LLM-generated counterfactuals for faithful model explanations.'
+  note_status: pending
+  pdf_status: missing
+- key: feder-2023
+  title: Data Augmentations for Improved (Large) Language Model Generalization
+  authors:
+  - Amir Feder
+  - Yoav Wald
+  - Claudia Shi
+  - Suchi Saria
+  - David M. Blei
+  year: 2023
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2310.12803
+    openalex: W4387839036
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Causally-guided counterfactual augmentation with an LLM (NeurIPS 2023).'
+  note_status: pending
+  pdf_status: missing
+- key: zhou-2023
+  title: Explore Spurious Correlations at the Concept Level in Language Models for Text Classification
+  authors:
+  - Yuhang Zhou
+  - Paiheng Xu
+  - Xiaoyu Liu
+  - Bang An
+  - Wei Ai
+  - Furong Huang
+  year: 2023
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2311.08648
+    openalex: W4388747884
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Concept-level spurious correlations; ChatGPT counterfactuals for rebalancing.'
+  note_status: pending
+  pdf_status: missing
+- key: wang-2025
+  title: Truth or Twist? Optimal Model Selection for Reliable Label Flipping Evaluation in LLM-based Counterfactuals
+  authors:
+  - Wang, Qianli
+  - Nguyen, Van Bach
+  - Feldhus, Nils
+  - Villa-Arenas, Luis Felipe
+  - Seifert, Christin
+  - Möller, Sebastian
+  - Schmitt, Vera
+  year: 2025
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2505.13972
+    openalex: W6929553187
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Judge choice for label-flip evaluation: independent non-fine-tuned judges best, ~23% off humans. Main text read.'
+  note_status: pending
+  pdf_status: missing
+- key: zhang-2025
+  title: Dually Self-Improved Counterfactual Data Augmentation Using Large Language Model
+  authors:
+  - Luhao Zhang
+  - Xinyu Zhang
+  - Linmei Hu
+  - Dandan Song
+  - Liqiang Nie
+  year: 2025
+  publication_type: conference-paper
+  venue: Annual Meeting of the Association for Computational Linguistics (ACL)
+  identifiers:
+    doi: 10.18653/v1/2025.acl-long.260
+    openalex: W4412945707
+  relevance: to_classify
+  priority: to_review
+  rationale: 'LLM CDA with self-improved causal-term extraction and counterfactual quality (ACL 2025).'
+  note_status: pending
+  pdf_status: missing
+- key: bae-2025
+  title: 'SALAD: Improving Robustness and Generalization through Contrastive Learning with Structure-Aware and LLM-Driven Augmented Data'
+  authors:
+  - Suyoung Bae
+  - YunSeok Choi
+  - Hyo‐Jun Kim
+  - Jee-Hyong Lee
+  year: 2025
+  publication_type: conference-paper
+  venue: 'Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL)'
+  identifiers:
+    doi: 10.18653/v1/2025.naacl-long.634
+    openalex: W4411119148
+  relevance: to_classify
+  priority: to_review
+  rationale: 'SALAD: LLM counterfactuals as contrastive negatives (NAACL 2025).'
+  note_status: pending
+  pdf_status: missing
+- key: bhattacharjee-2024
+  title: 'Zero-shot LLM-guided Counterfactual Generation: A Case Study on NLP Model Evaluation'
+  authors:
+  - Amrita Bhattacharjee
+  - Raha Moraffah
+  - Joshua Garland
+  - Huan Liu
+  year: 2024
+  publication_type: conference-paper
+  venue: IEEE International Conference on Big Data (BigData)
+  identifiers:
+    doi: 10.1109/bigdata62323.2024.10825537
+    openalex: W4406457873
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Zero-shot LLM counterfactuals for stress-testing NLP models (automated contrast-set use).'
+  note_status: pending
+  pdf_status: missing
+- key: gebreegziabher-2025
+  title: Leveraging Variation Theory in Counterfactual Data Augmentation for Optimized Active Learning
+  authors:
+  - Simret Araya Gebreegziabher
+  - Kunpeng Ai
+  - Zheng Zhang
+  - Elena Leah Glassman
+  - Toby Jia-Jun Li
+  year: 2025
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2025.findings-acl.50
+    openalex: W4412888965
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Variation-Theory CDA with an LLM for active learning cold start.'
+  note_status: pending
+  pdf_status: missing
+- key: lin-2025
+  title: 'Enhancing NLP Robustness and Generalization through LLM-Generated Contrast Sets: A Scalable Framework for Systematic Evaluation and Adversarial Training'
+  authors:
+  - Lin, Hender
+  year: 2025
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2503.06648
+    openalex: W6910522968
+  relevance: to_classify
+  priority: to_review
+  rationale: 'LLM-generated contrast sets for SNLI (single-author preprint; weak evidence).'
+  note_status: pending
+  pdf_status: missing
+- key: balepur-2024
+  title: Is Your Large Language Model Knowledgeable or a Choices-Only Cheater?
+  authors:
+  - Nishant Balepur
+  - Rachel Rudinger
+  year: 2024
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2407.01992
+    openalex: W4400373939
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Contrast set for MCQA mined from existing data to test LLM choices-only shortcuts.'
   note_status: pending
   pdf_status: missing
