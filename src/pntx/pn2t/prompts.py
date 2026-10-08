@@ -166,7 +166,14 @@ Positive label clearly apply to it.
 
 Rules (counterfactual revision, after Kaushik et al. 2020):
 - The edited text must clearly belong to the Positive class, as the Positive \
-reference examples define it
+reference examples define it: a reader who sees only the edited text must \
+label it Positive
+- Change EVERY statement that expresses a Negative judgment, not just the \
+overall verdict. Changing only a rating or a conclusion, or appending a \
+concession ("however, it has some good points") while other Negative \
+statements remain, is a failed edit
+- Flip each such statement minimally -- swap or negate its evaluative words \
+-- rather than deleting or rewriting whole sentences
 - The edited text must stay coherent and natural
 - Make no unnecessary changes: keep everything not needed to change the label \
 (topic, entities, length, style, wording) exactly as it is
@@ -183,9 +190,9 @@ Return exactly one edit per Negative text. pivot_id is the number of the \
 Negative text the edit is based on. edited_text is the complete edited text \
 and nothing else -- not the original, no arrows, no explanation. \
 changed_spans lists each change briefly as "original -> edited". \
-is_positive is your honest judgment of whether the edited text now clearly \
-belongs to the Positive class; set it to false if a small edit could not \
-achieve that.
+is_positive is your honest judgment, as a reader who sees only the edited \
+text, of whether it now clearly belongs to the Positive class; set it to \
+false if any Negative judgment remains or a small edit could not achieve that.
 Respond with a single JSON object matching this schema and nothing else \
 (no prose, no markdown code fences):
 

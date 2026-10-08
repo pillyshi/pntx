@@ -3,9 +3,9 @@
 ## Status
 
 Implemented as `pn2t.CounterfactualOverSampler` (`src/pntx/pn2t/_counterfactual.py`,
-unreleased as of 2026-10-08). `verify` ships **without a default** (required
-parameter) and `max_edit_ratio` with a provisional `0.5`, until the pilot
-benchmark below is run. Open: the pilot itself, and the open questions at the end.
+released in 0.17.0). The pilot benchmark below has been run: `verify` now
+defaults to `"self"` and `max_edit_ratio` stays `0.5` (both evidence-based). Open:
+generation quality (partial flips; see the open questions at the end).
 
 ### First real-model observations (2026-10-08, 3 Japanese negatives, not a benchmark)
 
@@ -163,6 +163,132 @@ Decide by a pilot benchmark before the first release, not by argument:
 Pick the default with the best precision/retention trade-off at acceptable
 cost. If two strategies are close, prefer the cheaper one.
 
+### Pilot results (2026-10-08)
+
+Setup: `benchmarks/pn2t/counterfactual_pilot.py` (see `benchmarks/README.md`).
+It uses 40 negative pivots from the CAD test split (reviews ≤ 1000 chars) and
+20 positive references from the original training split, with seed 0. Edits
+are generated once with `verify="none"` at temperature 0.7, and all three
+strategies are then scored on identical candidates. The reference label comes
+from a judge model of a *different family* than the editor, zero-shot. Hardness
+is measured with TF-IDF + logistic regression trained on the original training
+reviews only. A judge was needed because gemma3-12B, the intended judge, does
+not fit in this machine's 16 GB RAM. Raw results are in
+`benchmarks/results/pn2t-cf-pilot-*.json` (git-ignored).
+
+**Editor qwen2.5-7B, judge llama3.1-8B.** The judge agreed with the human CAD
+labels 0.89 of the time. 40 candidates; 14 were rejected earlier as
+`edit_too_large`. Median LLM edit ratio was 0.16, versus 0.08 for humans.
+
+| verify | kept | precision | catch rate | false-reject rate | downstream-easy | valid & hard |
+|---|---|---|---|---|---|---|
+| none | 40 | 0.33 | 0.00 | 0.00 | 0.33 | 6 |
+| self | 30 | 0.43 | 0.37 | 0.00 | 0.30 | 6 |
+| classifier (cv=5) | 12 | 0.75 | 0.89 | 0.31 | 0.83 | 2 |
+| *human revisions* | 40 | 0.82 | – | – | 0.50 | 17 |
+
+**Editor llama3.2-3B, judge qwen2.5-7B.** The judge agreed with the human labels
+0.93 of the time. 32 candidates; 77 were rejected earlier as `edit_too_large`.
+Only 2 of the 32 candidates were judged positive.
+
+| verify | kept | precision | catch rate | false-reject rate | downstream-easy | valid & hard |
+|---|---|---|---|---|---|---|
+| none | 32 | 0.06 | 0.00 | 0.00 | 0.28 | 0 |
+| self | 9 | 0.11 | 0.73 | 0.50 (n=2) | 0.44 | 0 |
+| classifier (cv=5) | 1 | 1.00 | 1.00 | 0.50 (n=2) | 1.00 | 0 |
+| *human revisions* | 40 | 0.90 | – | – | 0.50 | 17 |
+
+How to read the columns:
+
+- **precision:** the share of kept edits the judge calls positive.
+- **catch rate / false-reject rate:** the share of judge-negative / judge-positive
+  candidates the strategy rejects.
+- **downstream-easy:** the share of kept edits the shallow classifier already
+  gets right.
+- **valid & hard:** kept edits that are judge-positive *and* missed by the shallow
+  classifier. These are the edits worth adding to training data.
+
+**Findings**
+
+1. **The editor is the bottleneck, not the verifier.** Even qwen2.5-7B flips
+   only a third of the reviews (by the judge), against 0.82–0.90 for human
+   revisions. The typical failure is a *partial flip* on a long review: the
+   rating changes, or a "however, it has redeeming qualities" sentence is
+   appended, while most negative statements stay. llama3.2-3B mostly rewrites
+   instead of editing. No verification strategy fixes a weak editor.
+2. **`"self"` dominates `"none"`.** It had higher precision in both runs
+   (0.43 vs 0.33 and 0.11 vs 0.06), kept the same number of valid & hard edits
+   with qwen (6 = 6), costs nothing extra, and wrongly rejected no good edit
+   with qwen. Its catch rate is modest (0.37) with the stronger editor.
+3. **The classifier verifier shows exactly the bias [[gardner-2020]] §2.4
+   predicts.** It is the most precise, but 83% of what it keeps is already easy
+   for the shallow model, and it keeps only 2 valid & hard edits (versus 6). It
+   also rejects 31% of good flips, adds about 11 s per candidate (qwen run), and
+   its low yield (0.30 and 0.03) means many more retries in real use. With a weak
+   editor it would rarely reach the target count.
+
+**Recommendation:** make `verify="self"` the default, and document the
+classifier verifier as an opt-in for when label precision matters more than
+hardness. Raise the generation quality next. The partial-flip failure points
+at the prompt, e.g. requiring that *every* negative judgment in the text is
+flipped, not just the verdict. Also document that the sampler needs a ≥7B-class
+editor for review-length texts.
+
+**Caveats:** 40 pivots per run, one domain (English movie reviews, mostly
+600–1000 chars), one prompt, a single seed, and LLM judges in place of humans.
+The judges agree with human labels 89–93% of the time, but they under-call
+positives (0.82–0.90 on human revisions), so absolute precisions are
+conservative. The comparison *between* strategies uses the same judge and the
+same candidates, which is the robust part.
+
+### Prompt iteration for partial flips (2026-10-08, one time-boxed round)
+
+The prompt changes were:
+
+1. Partial flips are named as failures: changing only the rating or verdict,
+   or appending a concession, while other Negative statements remain.
+2. *every* Negative judgment must be flipped, each by swapping or negating its
+   evaluative words rather than by deleting or rewriting sentences.
+3. `is_positive` is judged "as a reader who sees only the edited text".
+
+The rerun used the same pilot, seed and models (qwen2.5-7B editor,
+llama3.1-8B judge).
+
+| verify | precision | catch rate | false-reject | downstream-easy | valid & hard | yield |
+|---|---|---|---|---|---|---|
+| none | 0.33 → **0.53** | – | – | 0.33 → 0.60 | 6 → 6 | 1.00 |
+| self | 0.43 → **0.59** | 0.37 → 0.26 | 0.00 → 0.05 | 0.30 → 0.59 | 6 → 6 | 0.75 → 0.85 |
+| classifier | 0.75 → 0.77 | 0.89 → 0.74 | 0.31 → 0.19 | 0.83 → 0.68 | 2 → 5 | 0.30 → 0.55 |
+
+Rewrites rejected as `edit_too_large` fell from 14 to 10. The median edit ratio
+went from 0.165 to 0.188, still far under 0.5. The new prompt is kept: it
+improves precision with no loss of valid & hard edits.
+
+Complete flips are also more lexically obvious, so a larger share of them is
+easy for the shallow model (downstream-easy rose). That is the expected price
+of fixing partial flips, not a regression in useful output: valid & hard is
+unchanged.
+
+`"self"` stays the default. It still beats `"none"` on precision for free. The
+classifier verifier closed most of its hardness gap (5 vs 6 valid & hard) at
+0.77 precision, but it costs about 11 s per candidate and more retries (yield
+0.55). It remains the opt-in for precision-sensitive use.
+
+Caveat: the precision gain for `"none"` is 21/40 vs 13/40 judge-positive, from a
+single sampled run at temperature 0.7. That is a meaningful but not conclusive
+difference. No further prompt rounds are planned, per the maintainer's direction
+to not over-invest in small-model quality.
+
+### `max_edit_ratio` calibration (2026-10-08)
+
+On the 363 human negative→positive revisions in the CAD test and dev splits,
+`dedup.edit_ratio` has a median of 0.081, a p95 of 0.20 and a maximum of 0.40.
+None exceed 0.5. The ratio does not grow with length: by length bucket, the p95
+is 0.28 (<300 chars), 0.23, 0.20, 0.19 and 0.16 (>1500 chars), and short texts
+vary the most. So the provisional default of 0.5 is kept, as a ceiling above
+every human edit. A length-dependent threshold is not needed (closes open
+questions 1 and 2).
+
 ## Acceptance Criteria
 
 - Unit tests with `FakeBackend` cover:
@@ -212,10 +338,13 @@ with `"prefit"` escape hatch), and the class's place in the family (its own
 `CounterfactualOverSampler`, not a `HardPositiveOverSampler` mode). See
 "Proposed Scope".
 
-1. **Long texts.** Kaushik filtered out the longest 20% of reviews, and
-   editor agreement drops with length. Should pivots be capped by token
-   length, or should `max_edit_ratio` scale with length?
-2. **Default `max_edit_ratio`.** It needs an empirical value; Kaushik doesn't
-   report edit sizes directly. Pick it from a small pilot on IMDb CAD data
-   (the released revised split gives real human edit ratios to calibrate
-   against).
+1. ~~**Long texts.**~~ Closed: human edit ratios don't grow with length
+   (see "`max_edit_ratio` calibration"). Long reviews do make *partial flips*
+   more likely, but that is a generation-quality problem, not a threshold one.
+2. ~~**Default `max_edit_ratio`.**~~ Closed: 0.5 kept (human max 0.40).
+3. ~~**Default `verify`.**~~ Closed: `"self"`, adopted 2026-10-08 per the pilot.
+4. **Partial flips.** One prompt round raised `"none"` precision from 0.33 to
+   0.53 and `"self"` from 0.43 to 0.59 with qwen2.5-7B (see "Prompt iteration").
+   This is still below human revisions (0.82 by the same judge). Further gains
+   most likely come from a stronger editor model rather than more prompting;
+   not pursued further for now.

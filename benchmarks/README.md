@@ -46,9 +46,40 @@ Run `uv run python -m benchmarks.t2pn.run --help` for all options
 for the HF datasets cache, `--output` for the result JSON path). Results are
 written to `benchmarks/results/` (git-ignored; not checked in).
 
-## Planned: pn2t (generation) benchmark
+## pn2t: `CounterfactualOverSampler` `verify` pilot
 
-Not implemented yet. The plan is to evaluate `generate()` as a data
-augmentor: generate synthetic positive/negative texts, train a separate
-downstream classifier on real + synthetic data, and compare against a
-real-data-only baseline on the same held-out Jigsaw eval set.
+`benchmarks/pn2t/counterfactual_pilot.py` measures which label-verification
+strategy (`verify="none"`, `"self"`, or a cross-fitted classifier) should be
+`CounterfactualOverSampler`'s default. The design and results are recorded in
+`research/ideas/counterfactual-edit-sampler.md`.
+
+**Dataset:** the counterfactually-augmented IMDb data of Kaushik et al. (2020)
+([`acmi-lab/counterfactually-augmented-data`](https://github.com/acmi-lab/counterfactually-augmented-data),
+Apache-2.0), loaded by `benchmarks/cad.py`. Files are downloaded with the
+standard library and cached in `~/.cache/pntx-benchmarks/cad`, so no `datasets`
+dependency is needed. Negative test-split reviews are used as pivots, with
+their human revisions as a reference. The original training reviews provide
+positive references and the shallow downstream classifier.
+
+**What it does:** it generates edits once with `verify="none"`, then scores
+every candidate in four ways:
+
+- the editor's own `is_positive`, which is what `"self"` uses;
+- a cross-fitted `LLMPromptingClassifier` on the same loaded model, run
+  through the sampler's own cross-fitting code;
+- a judge model from a *different* family, used as a reference label (its
+  agreement with the human labels is reported too);
+- a TF-IDF + logistic regression model trained on the original data only,
+  which measures how "easy" kept edits are.
+
+Each strategy then gets precision, catch rate, false-reject rate, yield and
+downstream-easy share (`benchmarks/pn2t/pilot_metrics.py`).
+
+```
+uv run --extra llama python -m benchmarks.pn2t.counterfactual_pilot \
+    --editor-model /path/to/editor.gguf --judge-model /path/to/judge.gguf \
+    --n-pivots 40 --n-references 20
+```
+
+Like the t2pn benchmark, this is not run in CI. Results go to
+`benchmarks/results/`, which is git-ignored.

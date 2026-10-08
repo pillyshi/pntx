@@ -83,7 +83,7 @@ from pntx.pn2t import CounterfactualOverSampler
 cf = CounterfactualOverSampler(
     backend="llama",
     backend_kwargs={"model_path": "model.gguf"},
-    verify="self",  # required: "none", "self", or a classifier (see below)
+    verify="self",  # the default; or "none", or a classifier (see below)
 )
 X_cf, y_cf = cf.fit_resample(X, [1, 1, 0, 0])
 cf.generation_result_.edits     # (source_index, source_text) -> text, with changed spans
@@ -151,8 +151,13 @@ then label verification:
   a minimal edit of tends to reject correct flips. `verify_cv="prefit"` uses an
   already-fitted classifier as-is.
 
-`verify` has no default yet: which strategy works best is to be decided by a pilot
-benchmark. Rejected candidates are kept in `generation_result_.rejected` with a reason
+`verify` defaults to `"self"`, chosen by a pilot benchmark on Kaushik et al.'s IMDb data
+(`benchmarks/pn2t/counterfactual_pilot.py`). `"self"` was more precise than `"none"` at no
+extra cost. The classifier verifier was the most precise, but most of what it kept was
+already easy for a shallow classifier. The editor model matters more than the verifier: a
+7B model fully flipped about half of long reviews (humans: ~0.8–0.9 by the same LLM judge),
+and a 3B model mostly rewrote them.
+Rejected candidates are kept in `generation_result_.rejected` with a reason
 (`"edit_too_large"`, `"self_check_failed"`, `"verifier_rejected"`, ...) so you can see what
 each filter catches.
 

@@ -79,7 +79,7 @@ from pntx.pn2t import CounterfactualOverSampler
 
 sampler = CounterfactualOverSampler(
     backend=...,
-    verify=LLMPromptingClassifier(backend=...),  # 必須: "none" / "self" / 分類器(既定 verify_cv=5 でクロスフィッティング)
+    verify=LLMPromptingClassifier(backend=...),  # 既定 "self"。"none" / 分類器(既定 verify_cv=5 でクロスフィッティング)も可
 )
 X_cf, y_cf = sampler.fit_resample(X, y)       # 各正例は既存の負例(pivot)の最小編集。pivot は X にあるのでペアになる
 sampler.generation_result_.edits              # source_index/source_text → text、changed_spans、edit_ratio
@@ -178,7 +178,7 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 - 既存の**負例を pivot として**、正例ラベルが当てはまるようにする最小編集を LLM に作らせる(Kaushik et al. の3条件: ラベルが反転する・一貫性を保つ・不要な変更をしない)。pivot は元々 `X` にあるので、編集後の正例を末尾に足すだけで「元の例と反実仮想」のペアになる。**生成するのは正例のみ**で、正例 → 負例の編集はスコープ外(negative 側生成と同じ扱い)。
 - 正例はプロンプトに**参照例としてだけ**入れる(正例の意味はユーザ定義なので、何に向けて編集するかを LLM に示す必要がある)。正例は pivot にしない。pivot は負例から `sample_method` で予算内に非復元抽出し、全負例を試し終えてから再利用する。
 - 候補ごとのチェック順(基底クラスのパイプライン): ① 常に適用 — 形式(pivot にない `->`/`→` を含む = `changed_spans` の書式をテキストに混ぜた。qwen2.5-7B で実際に起きた)、no-op、最小性(`pntx.dedup.edit_ratio` が `max_edit_ratio` 以下、暫定既定 0.5)、`verify="self"` の自己判定 ② `deduplicate=True` のとき完全一致 dedup ③ 分類器による検証(バッチ単位)。棄却理由は `generation_result_.rejected` に残す。
-- `verify` は**既定なしの必須パラメータ**(`"none"`/`"self"`/`predict` を持つ分類器)。既定はパイロットベンチマークで決める(後から既定を足すのは非破壊、変えるのは破壊的なので、それまで既定を置かない)。分類器の場合は `verify_cv`(既定 5)で `StratifiedGroupKFold`(同一テキストは同じ fold)によるクロスフィッティング: 各編集は自分の pivot を学習していない `clone(verify)` で判定し、clone は必要な fold の分だけ遅延 fit、渡されたインスタンス自体は fit しない。`verify_cv="prefit"` は渡された分類器をそのまま使う(`CalibratedClassifierCV(cv="prefit")` と同じ流儀)。
+- `verify` は `"none"`/`"self"`/`predict` を持つ分類器で、**既定は `"self"`**(パイロットベンチマーク `benchmarks/pn2t/counterfactual_pilot.py` で決定。結果はアイデアファイル参照: `"self"` は追加コストなしで `"none"` より精度が高く、難しい正しい編集を失わない。分類器は精度最高だが簡単な編集ばかり残す)。分類器の場合は `verify_cv`(既定 5)で `StratifiedGroupKFold`(同一テキストは同じ fold)によるクロスフィッティング: 各編集は自分の pivot を学習していない `clone(verify)` で判定し、clone は必要な fold の分だけ遅延 fit、渡されたインスタンス自体は fit しない。`verify_cv="prefit"` は渡された分類器をそのまま使う(`CalibratedClassifierCV(cv="prefit")` と同じ流儀)。
 - LLM の出力スキーマ(`CounterfactualBatch`、`pivot_id` はバッチ内番号)と保存する結果(`CounterfactualGenerationResult`、`source_index` は `X` の添字)は別モデル。そのため基底クラスは結果型・バッチ型・アイテム型の3つの型パラメータを持つ。
 - 0.16.0 の非推奨パラメータ(`n_synthesized`/`seed`)は受け付けない(新クラスなので)。
 

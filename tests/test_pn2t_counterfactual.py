@@ -404,9 +404,8 @@ def test_invalid_params_raise(kwargs: dict[str, Any], match: str) -> None:
         _sampler(FakeBackend(), **kwargs).fit_resample(X, y)
 
 
-def test_verify_is_required() -> None:
-    with pytest.raises(TypeError):
-        CounterfactualOverSampler(backend=FakeBackend())  # type: ignore[call-arg]
+def test_verify_defaults_to_self() -> None:
+    assert CounterfactualOverSampler(backend=FakeBackend()).verify == "self"
 
 
 def test_verify_cv_is_ignored_for_string_strategies() -> None:

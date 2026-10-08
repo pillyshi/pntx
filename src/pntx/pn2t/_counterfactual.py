@@ -72,21 +72,25 @@ class CounterfactualOverSampler(
     so rejection rates per filter are observable.
 
     ``verify`` decides how an edit that did not actually flip the label is
-    caught. It is **required** (no default) until a pilot benchmark settles
-    which strategy should be the default -- see
-    ``research/ideas/counterfactual-edit-sampler.md``:
+    caught. The default ``"self"`` was chosen by a pilot benchmark on
+    Kaushik et al.'s IMDb data (``benchmarks/pn2t/counterfactual_pilot.py``;
+    results in ``research/ideas/counterfactual-edit-sampler.md``): it was
+    more precise than ``"none"`` at no extra cost and without losing the
+    hard, valid edits, whereas a classifier verifier was the most precise
+    but mostly kept edits a shallow classifier already gets right:
 
     - ``"none"``: trust the edit prompt.
-    - ``"self"``: reject edits the LLM itself marks ``is_positive=false`` in
-      the same response. No extra backend calls, but the editor grades its
-      own work.
+    - ``"self"`` (default): reject edits the LLM itself marks
+      ``is_positive=false`` in the same response. No extra backend calls, but
+      the editor grades its own work, so it only catches some failed flips.
     - a classifier (any object with sklearn-style ``predict``, e.g.
       ``t2pn.LLMPromptingClassifier`` on the same backend, or
       ``t2pn.FineTuningClassifier``): reject edits it doesn't predict as the
       positive label. The verifier represents the *pre-augmentation* model:
       it is only ever fitted on the original ``(X, y)``, never on edits.
       Note that a model in the loop biases accepted edits toward ones that
-      model already gets right (Gardner et al. 2020, §2.4).
+      model already gets right (Gardner et al. 2020, §2.4) -- choose it when
+      label precision matters more than hardness.
 
     ``verify_cv`` controls how a classifier verifier is fitted:
 
@@ -130,6 +134,12 @@ class CounterfactualOverSampler(
             self-assessment, and the edit ratio) and rejected candidates
             with reasons.
 
+    The editor model matters more than the verifier: in the pilot a 7B model
+    fully flipped about half of long (≤1000-char) reviews (versus ~0.8-0.9 for
+    human revisions, by the same LLM judge) and a 3B model mostly rewrote
+    instead of editing. Expect to need a ≥7B-class model for
+    review-length texts.
+
     Example::
 
         from pntx.pn2t import CounterfactualOverSampler
@@ -162,7 +172,7 @@ class CounterfactualOverSampler(
         self,
         backend: Backend | str,
         *,
-        verify: str | Any,
+        verify: str | Any = "self",
         verify_cv: int | str = 5,
         sampling_strategy: SamplingStrategy = "auto",
         backend_kwargs: dict[str, Any] | None = None,
