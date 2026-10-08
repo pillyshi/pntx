@@ -456,7 +456,7 @@ papers:
     openalex: W3089770252
   relevance: to_classify
   priority: to_review
-  rationale: 'Theory for why CAD works (linear-Gaussian toy model); CAD authors'' follow-up.'
+  rationale: Theory for why CAD works (linear-Gaussian toy model); CAD authors' follow-up.
   note_status: pending
   pdf_status: missing
 - key: joshi-2022
@@ -512,7 +512,7 @@ papers:
     openalex: W3155431862
   relevance: to_classify
   priority: to_review
-  rationale: 'Contrast-set authors'' follow-up: competency problems and an artifact test.'
+  rationale: "Contrast-set authors' follow-up: competency problems and an artifact test."
   note_status: pending
   pdf_status: missing
 - key: wu-2021
@@ -641,7 +641,7 @@ papers:
     openalex: W4378473938
   relevance: to_classify
   priority: to_review
-  rationale: 'Empirical study of prompting LLMs for counterfactuals; scaling alone doesn''t help, guidelines do.'
+  rationale: Empirical study of prompting LLMs for counterfactuals; scaling alone doesn't help, guidelines do.
   note_status: pending
   pdf_status: missing
 - key: sen-2023
@@ -679,7 +679,7 @@ papers:
     openalex: W4404780766
   relevance: to_classify
   priority: to_review
-  rationale: 'LLM counterfactuals fluent but not minimal; flip harder on NLI/HS; LLM judges agree with given labels. Main text read.'
+  rationale: LLM counterfactuals fluent but not minimal; flip harder on NLI/HS; LLM judges agree with given labels. Main text read.
   note_status: pending
   pdf_status: missing
 - key: nguyen-2024-2
@@ -696,7 +696,7 @@ papers:
     openalex: W4411113472
   relevance: to_classify
   priority: to_review
-  rationale: 'CEval benchmark for counterfactual text generation metrics.'
+  rationale: CEval benchmark for counterfactual text generation metrics.
   note_status: pending
   pdf_status: missing
 - key: wang-2024
@@ -717,7 +717,7 @@ papers:
     openalex: W4404781902
   relevance: to_classify
   priority: to_review
-  rationale: 'Survey of natural-language counterfactual generation, LLM-focused taxonomy.'
+  rationale: Survey of natural-language counterfactual generation, LLM-focused taxonomy.
   note_status: pending
   pdf_status: missing
 - key: gat-2023
@@ -737,7 +737,7 @@ papers:
     openalex: W4387323731
   relevance: to_classify
   priority: to_review
-  rationale: 'LLM-generated counterfactuals for faithful model explanations.'
+  rationale: LLM-generated counterfactuals for faithful model explanations.
   note_status: pending
   pdf_status: missing
 - key: feder-2023
@@ -756,7 +756,7 @@ papers:
     openalex: W4387839036
   relevance: to_classify
   priority: to_review
-  rationale: 'Causally-guided counterfactual augmentation with an LLM (NeurIPS 2023).'
+  rationale: Causally-guided counterfactual augmentation with an LLM (NeurIPS 2023).
   note_status: pending
   pdf_status: missing
 - key: zhou-2023
@@ -776,7 +776,7 @@ papers:
     openalex: W4388747884
   relevance: to_classify
   priority: to_review
-  rationale: 'Concept-level spurious correlations; ChatGPT counterfactuals for rebalancing.'
+  rationale: Concept-level spurious correlations; ChatGPT counterfactuals for rebalancing.
   note_status: pending
   pdf_status: missing
 - key: wang-2025
@@ -816,7 +816,7 @@ papers:
     openalex: W4412945707
   relevance: to_classify
   priority: to_review
-  rationale: 'LLM CDA with self-improved causal-term extraction and counterfactual quality (ACL 2025).'
+  rationale: LLM CDA with self-improved causal-term extraction and counterfactual quality (ACL 2025).
   note_status: pending
   pdf_status: missing
 - key: bae-2025
@@ -852,7 +852,7 @@ papers:
     openalex: W4406457873
   relevance: to_classify
   priority: to_review
-  rationale: 'Zero-shot LLM counterfactuals for stress-testing NLP models (automated contrast-set use).'
+  rationale: Zero-shot LLM counterfactuals for stress-testing NLP models (automated contrast-set use).
   note_status: pending
   pdf_status: missing
 - key: gebreegziabher-2025
@@ -871,7 +871,7 @@ papers:
     openalex: W4412888965
   relevance: to_classify
   priority: to_review
-  rationale: 'Variation-Theory CDA with an LLM for active learning cold start.'
+  rationale: Variation-Theory CDA with an LLM for active learning cold start.
   note_status: pending
   pdf_status: missing
 - key: lin-2025
@@ -886,7 +886,7 @@ papers:
     openalex: W6910522968
   relevance: to_classify
   priority: to_review
-  rationale: 'LLM-generated contrast sets for SNLI (single-author preprint; weak evidence).'
+  rationale: LLM-generated contrast sets for SNLI (single-author preprint; weak evidence).
   note_status: pending
   pdf_status: missing
 - key: balepur-2024
@@ -902,6 +902,45 @@ papers:
     openalex: W4400373939
   relevance: to_classify
   priority: to_review
-  rationale: 'Contrast set for MCQA mined from existing data to test LLM choices-only shortcuts.'
+  rationale: Contrast set for MCQA mined from existing data to test LLM choices-only shortcuts.
+  note_status: pending
+  pdf_status: missing
+- key: jin-2025
+  title: 'CoBA: Counterbias Text Augmentation for Mitigating Various Spurious Correlations via Semantic Triples'
+  authors:
+  - Kyohoon Jin
+  - Juhwan Choi
+  - Jungmin Yun
+  - Junho Lee
+  - Soojin Jang
+  - Youngbin Kim
+  year: 2025
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2508.21083
+    openalex: W4415986814
+  relevance: to_classify
+  priority: to_review
+  rationale: 'CoBA: counterbias augmentation via semantic-triple edits, a generalisation of CAD to multiple biases (same group as jin-2024; does not build on it).'
+  note_status: pending
+  pdf_status: missing
+- key: jin-2024
+  title: Enhancing Effectiveness and Robustness in a Low-Resource Regime via Decision-Boundary-aware Data Augmentation
+  authors:
+  - Kyohoon Jin
+  - Lee, Junho
+  - Juhwan Choi
+  - Sangmin Song
+  - Youngbin Kim
+  year: 2024
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2403.15512
+    openalex: W4393212345
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Published at LREC-COLING 2024 (pp. 5930-5943); catalogued via the arXiv record because OpenAlex''s LREC record has a corrupted author name. Offline T5 generator shifts latents to the decision boundary and adds soft-labelled sentences for fine-tuning; considered for FineTuningClassifier (research/ideas/soft-label-augmented-finetuning.md), not implemented. No method follow-ups found as of 2026-10-08.'
   note_status: pending
   pdf_status: missing
