@@ -74,9 +74,13 @@ first asking the backend to analyze what distinguishes the two classes. It's a f
 port of [`semaxis`](https://github.com/pillyshi/semaxis)'s `HardPositiveOverSampler`,
 routed through `pntx`'s own `Backend` abstraction so it can share a loaded model with
 `LLMPromptingClassifier` instead of loading its own. v1 only generates the positive side and
-supports binary `{0, 1}` labels; `imbalanced-learn` itself isn't required (`fit_resample`
+supports binary labels only (`0`/`1`, `-1`/`1`, `"positive"`/`"negative"`, or any other pair
+with `pos_label`); `imbalanced-learn` itself isn't required (`fit_resample`
 is duck-typed, so `imblearn.pipeline.Pipeline` still works if it's installed
-separately).
+separately). Note that hard positives are not contrast sets or counterfactual edits
+(minimal edits of an existing example that flip its label): each one is a new example
+whose label stays positive, and "hard" is the LLM's judgment, not verified against a
+classifier.
 
 `SyntheticSampler.fit_resample` has a different goal: instead of hard positives for
 classifier augmentation, it generates *typical* positive-class texts with specific
@@ -88,7 +92,11 @@ against negatives would frame generation around the boundary rather than the typ
 case. Anonymity is best-effort: besides the prompt instructions, a lightweight verbatim-
 substring check (`min_verbatim_span`, default 20 characters) rejects and retries any
 generated text that copies a long span straight out of a positive exemplar — this catches
-copy-through leaks but not paraphrased ones, so it's not a privacy guarantee.
+copy-through leaks but not paraphrased ones, so it's not a privacy guarantee. In
+particular, it is **not differentially private**: positive exemplars go into the prompt
+verbatim. If you need a formal guarantee, use a DP method that keeps private text out of
+the prompt, such as [Aug-PE](https://arxiv.org/abs/2403.01749) (Xie et al., ICML 2024) or
+DP fine-tuning of the generator ([Yue et al., ACL 2023](https://aclanthology.org/2023.acl-long.74/)).
 
 ## Installation
 

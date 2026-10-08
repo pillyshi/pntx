@@ -63,6 +63,15 @@ class SyntheticSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
     leaks (e.g. "John Smith" → "the customer named John" would not be
     caught).
 
+    In particular, this is **not** differentially private: positive
+    exemplars are placed in the generation prompt verbatim, so nothing
+    formally bounds how much any single exemplar can influence (or leak
+    into) the output. Methods with a formal (ε, δ)-DP guarantee keep private
+    text out of the prompt entirely -- e.g. Aug-PE (Xie et al. 2024), which
+    only lets private samples cast noisy nearest-neighbor votes over
+    LLM-generated candidates, or DP fine-tuning of the generator (Yue et al.
+    2023). Use one of those when a formal guarantee is required.
+
     ``context_limit`` is the token budget for the *whole* per-batch prompt
     (exemplars + fixed overhead), and ``max_tokens`` is reserved out of it
     for the generation response. Unlike ``OverSampler`` (which splits its

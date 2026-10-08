@@ -59,6 +59,14 @@ class OverSampler(LLMEstimatorMixin, BaseEstimator):  # type: ignore[misc]
     texts that experts would label positive but that shallow classifiers or
     untrained humans might label negative.
 
+    Hard positives are *not* contrast sets (Gardner et al. 2020) or
+    counterfactually-augmented data (Kaushik et al. 2020): those are minimal
+    edits of an existing example that flip its gold label, whereas every
+    text generated here is a new example whose gold label stays positive
+    and only its surface is meant to look negative. No classifier is in the
+    loop either -- "hard" is the LLM's judgment from the boundary-feature
+    analysis, not something verified against a model's predictions.
+
     ``context_limit`` is the token budget for the *whole* per-batch prompt
     (exemplars + fixed overhead), and ``max_tokens`` is reserved out of it
     for the generation response -- pass a backend's actual context window
