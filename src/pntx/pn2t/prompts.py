@@ -139,11 +139,11 @@ def build_synthetic_user_message(
     n_synthesized: int,
     language: str | None = None,
 ) -> str:
-    """Render the user message for a ``SyntheticSampler`` batch.
+    """Render the user message for a ``TypicalPositiveOverSampler`` batch.
 
     Unlike ``build_user_message``, this takes only positive exemplars --
     negatives are deliberately excluded to avoid steering generation toward
-    a boundary/adversarial framing (see ``SyntheticSampler``'s docstring).
+    a boundary/adversarial framing (see ``TypicalPositiveOverSampler``'s docstring).
     """
     positive_list = (
         "\n".join(f"{i + 1}. {t}" for i, t in enumerate(pos_texts)) if pos_texts else "(none)"

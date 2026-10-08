@@ -58,7 +58,7 @@ class LLMPromptingClassifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):
     class is randomly trimmed down to the smaller class's count, so
     positive and negative are represented equally in the few-shot prompt
     regardless of how lopsided the fitted pools are (mirrors
-    ``pn2t.OverSampler``'s per-class budget split and count balancing).
+    ``pn2t.HardPositiveOverSampler``'s per-class budget split and count balancing).
     This replaces relying on the backend's own last-resort context
     trimming, which -- being backend-level -- knows nothing about
     exemplar boundaries or class balance and can silently truncate
@@ -231,8 +231,8 @@ class LLMPromptingClassifier(LLMEstimatorMixin, ClassifierMixin, BaseEstimator):
         """Save fitted state to a JSON file.
 
         ``backend`` is not included -- pass it back in via :meth:`load`'s
-        ``backend`` argument, the same convention ``pn2t.OverSampler``/
-        ``pn2t.SyntheticSampler`` use, since a loaded backend (e.g.
+        ``backend`` argument, the same convention ``pn2t.HardPositiveOverSampler``/
+        ``pn2t.TypicalPositiveOverSampler`` use, since a loaded backend (e.g.
         ``LlamaCppBackend``) isn't safely serializable and shouldn't be
         written out on every save.
 

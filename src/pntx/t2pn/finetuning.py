@@ -362,7 +362,7 @@ class FineTuningClassifier(ClassifierMixin, BaseEstimator):  # type: ignore[misc
     def save(self, path: str | os.PathLike[str]) -> None:
         """Save the fine-tuned model, tokenizer, and label mapping to a directory.
 
-        Unlike ``LLMPromptingClassifier``/``OverSampler``/``SyntheticSampler``,
+        Unlike ``LLMPromptingClassifier`` and the ``pn2t`` over-samplers,
         there is no ``backend`` to exclude -- this class has none. Instead the
         actual trained weights are persisted (via ``transformers``'
         ``save_pretrained``), which is the expensive-to-reproduce state here.

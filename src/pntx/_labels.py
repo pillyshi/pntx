@@ -14,7 +14,7 @@ def resolve_binary_labels(y: Iterable[Any], *, pos_label: Any = None) -> tuple[A
 
     Shared by every ``t2pn``/``pn2t`` component that consumes a binary
     ``y`` (``t2pn.LLMPromptingClassifier``, ``t2pn.FineTuningClassifier``,
-    ``pn2t.OverSampler``, ``pn2t.SyntheticSampler``), so all four resolve
+    ``pn2t.HardPositiveOverSampler``, ``pn2t.TypicalPositiveOverSampler``), so all four resolve
     label encodings the same way instead of each hardcoding its own rule.
 
     Resolution order:

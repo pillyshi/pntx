@@ -9,10 +9,11 @@ into two independent components:
    prompting/scoring (no training), and **`FineTuningClassifier`** actually fine-tunes a
    pretrained `transformers` encoder (default: multilingual BERT).
 2. **`pntx.pn2t`** (positive/negative → text) — two
-   [imbalanced-learn](https://imbalanced-learn.org/)-style oversamplers with different
-   goals: **`OverSampler`** generates "hard positive" text to balance an imbalanced
-   dataset for classifier training, and **`SyntheticSampler`** generates anonymized,
-   representative synthetic positives for publishing data you can't share as-is.
+   [imbalanced-learn](https://imbalanced-learn.org/)-style over-samplers with different
+   goals: **`HardPositiveOverSampler`** generates "hard positive" text to balance an
+   imbalanced dataset for classifier training, and **`TypicalPositiveOverSampler`**
+   generates typical, representative positives with specific details generalized away,
+   for publishing a stand-in for data you can't share as-is.
 
 The meaning of "positive" and "negative" is entirely up to you. It doesn't have to be
 sentiment — it can be formal/casual, policy-compliant/violating, or any other contrast
@@ -21,7 +22,7 @@ few-shot and scoring material.
 
 ```python
 from pntx.t2pn import LLMPromptingClassifier
-from pntx.pn2t import OverSampler
+from pntx.pn2t import HardPositiveOverSampler
 
 # --- t2pn: classification via LLM few-shot prompting (no training) ---
 clf = LLMPromptingClassifier(backend="llama", backend_kwargs={"model_path": "model.gguf"})
@@ -52,26 +53,33 @@ ft_clf.predict_proba(["The staff were incredibly friendly"])
 ft_clf.save("finetuned/")        # persists the trained weights, not just pooled text
 loaded_ft = FineTuningClassifier.load("finetuned/")
 
-# --- pn2t: generation (an imbalanced-learn-style OverSampler) ---
-sampler = OverSampler(backend="llama", backend_kwargs={"model_path": "model.gguf"})
+# --- pn2t: hard-positive generation (an imbalanced-learn-style over-sampler) ---
+sampler = HardPositiveOverSampler(
+    backend="llama",
+    backend_kwargs={"model_path": "model.gguf"},
+    sampling_strategy="auto",  # default: generate positives until classes balance
+    random_state=0,
+)
 
 X_aug, y_aug = sampler.fit_resample(X, [1, 1, 0, 0])  # binary labels only; positive class = 1
 sampler.generation_result_.hard_positives  # generated texts + the LLM's rationale for each
 
-# --- pn2t: anonymized synthetic data generation ---
-from pntx.pn2t import SyntheticSampler
+# --- pn2t: typical-positive generation for publishable stand-in data ---
+from pntx.pn2t import TypicalPositiveOverSampler
 
-synth = SyntheticSampler(
-    backend="llama", backend_kwargs={"model_path": "model.gguf"}, n_synthesized=10
+synth = TypicalPositiveOverSampler(
+    backend="llama",
+    backend_kwargs={"model_path": "model.gguf"},
+    sampling_strategy={1: 2 + 10},  # required: 2 existing positives + 10 new ones
 )
 X_syn, y_syn = synth.fit_resample(X, [1, 1, 0, 0])
 synth.generation_result_.synthetic_texts  # generated texts + what was generalized away for each
 ```
 
-`OverSampler.fit_resample` generates "hard positives" — texts an expert would label
+`HardPositiveOverSampler.fit_resample` generates "hard positives" — texts an expert would label
 positive but that shallow classifiers or untrained humans might mislabel negative — by
 first asking the backend to analyze what distinguishes the two classes. It's a full
-port of [`semaxis`](https://github.com/pillyshi/semaxis)'s `HardPositiveOverSampler`,
+port of [`semaxis`](https://github.com/pillyshi/semaxis)'s class of the same name,
 routed through `pntx`'s own `Backend` abstraction so it can share a loaded model with
 `LLMPromptingClassifier` instead of loading its own. v1 only generates the positive side and
 supports binary labels only (`0`/`1`, `-1`/`1`, `"positive"`/`"negative"`, or any other pair
@@ -82,14 +90,24 @@ separately). Note that hard positives are not contrast sets or counterfactual ed
 whose label stays positive, and "hard" is the LLM's judgment, not verified against a
 classifier.
 
-`SyntheticSampler.fit_resample` has a different goal: instead of hard positives for
-classifier augmentation, it generates *typical* positive-class texts with specific
-identifying details (names, exact dates/numbers, locations, verbatim phrases) generalized
-away, so the result is safe to publish even when the original pool isn't. The negative
-pool is still required (for the same binary-label validation as `OverSampler`), but it's
+`sampling_strategy` follows imbalanced-learn's semantics, restricted to generating the
+positive class: `"auto"` (the `HardPositiveOverSampler` default) generates until
+positives match negatives; a float in `(0, 1]` is the desired positive/negative ratio
+after resampling; a dict `{pos_label: n}` is the desired *total* number of positives
+after resampling; a callable `f(y)` returning such a dict also works. A strategy that
+would require generating negatives raises `ValueError`. `random_state` (an int or a
+`numpy.random.RandomState`) seeds exemplar sampling.
+
+`TypicalPositiveOverSampler.fit_resample` has a different goal: instead of hard
+positives for classifier augmentation, it generates *typical* positive-class texts with
+specific identifying details (names, exact dates/numbers, locations, verbatim phrases)
+generalized away, as a stand-in you can publish when the original pool can't be shared.
+It has no default `sampling_strategy`, since there's no natural target size for such a
+set. The negative pool is still required (for the same binary-label validation as
+`HardPositiveOverSampler`), but it's
 never shown to the backend — only positive exemplars inform generation, since contrasting
 against negatives would frame generation around the boundary rather than the typical
-case. Anonymity is best-effort: besides the prompt instructions, a lightweight verbatim-
+case. Removing identifying details is best-effort: besides the prompt instructions, a lightweight verbatim-
 substring check (`min_verbatim_span`, default 20 characters) rejects and retries any
 generated text that copies a long span straight out of a positive exemplar — this catches
 copy-through leaks but not paraphrased ones, so it's not a privacy guarantee. In
@@ -97,6 +115,12 @@ particular, it is **not differentially private**: positive exemplars go into the
 verbatim. If you need a formal guarantee, use a DP method that keeps private text out of
 the prompt, such as [Aug-PE](https://arxiv.org/abs/2403.01749) (Xie et al., ICML 2024) or
 DP fine-tuning of the generator ([Yue et al., ACL 2023](https://aclanthology.org/2023.acl-long.74/)).
+
+> **Renamed in 0.16.0.** `OverSampler` → `HardPositiveOverSampler`, `SyntheticSampler` →
+> `TypicalPositiveOverSampler`, and their `n_synthesized`/`seed` parameters →
+> `sampling_strategy`/`random_state` (imbalanced-learn's names). The old names still work
+> with a `DeprecationWarning` and will be removed in 0.18.0. `n_synthesized=n` corresponds
+> to `sampling_strategy={pos_label: n_positive + n}`; `n_synthesized=None` to `"auto"`.
 
 ## Installation
 
@@ -110,14 +134,14 @@ uv add "pntx[embeddings]"  # + semantic similarity for selectors
 ```
 
 `scikit-learn` and `pydantic` are core dependencies (every `t2pn` classifier's
-scikit-learn contract and `OverSampler`'s structured LLM output need them
+scikit-learn contract and the `pn2t` over-samplers' structured LLM output need them
 respectively). Each backend/feature otherwise lives behind its own extra, and using
 one without installing it raises a clear `ImportError` with the install command to run.
 
 ## Backends
 
 `pntx` runs models via a `Backend` protocol, shared by `LLMPromptingClassifier`,
-`OverSampler`, and `SyntheticSampler`. `FineTuningClassifier` does **not** use this
+`HardPositiveOverSampler`, and `TypicalPositiveOverSampler`. `FineTuningClassifier` does **not** use this
 abstraction at all -- it has no LLM calls, only a fine-tuned `transformers` encoder, so
 there's no loaded model to share with the others:
 
@@ -140,7 +164,7 @@ A remote API backend can be added later by implementing the `Backend` protocol
 ships right now.
 
 `backend_kwargs` is only used when `backend` is given as a string; it's a single dict
-(rather than `**kwargs`) so `LLMPromptingClassifier`/`OverSampler`/`SyntheticSampler` stay compatible
+(rather than `**kwargs`) so `LLMPromptingClassifier` and the `pn2t` over-samplers stay compatible
 with scikit-learn's `get_params()`/`clone()`.
 
 `LlamaCppBackend` accepts either a local `model_path` or a `repo_id` (optionally
@@ -161,7 +185,7 @@ clf = LLMPromptingClassifier(
 )
 ```
 
-To share one loaded model across `LLMPromptingClassifier`, `OverSampler`, and `SyntheticSampler`
+To share one loaded model across `LLMPromptingClassifier` and the `pn2t` over-samplers
 (recommended for local inference — avoids loading the same GGUF twice), construct the
 backend once and pass the instance to each:
 
@@ -170,8 +194,8 @@ from pntx.backends.llama import LlamaCppBackend
 
 backend = LlamaCppBackend(model_path="model.gguf")
 clf = LLMPromptingClassifier(backend=backend)
-sampler = OverSampler(backend=backend)
-synth = SyntheticSampler(backend=backend, n_synthesized=10)
+sampler = HardPositiveOverSampler(backend=backend)
+synth = TypicalPositiveOverSampler(backend=backend, sampling_strategy={1: 100})
 ```
 
 ## Selecting exemplars
@@ -185,7 +209,7 @@ positive and negative pools:
   dynamic, per-query selection.
 - **`DiversitySelector`** — greedily picks a maximally diverse subset.
 - **`BudgetSelector`** — picks as many texts as fit within a token budget (used
-  internally by `OverSampler` for its exemplar sampling).
+  internally by the `pn2t` over-samplers for their exemplar sampling).
 
 `NearestSelector` and `DiversitySelector` take a `similarity_fn`. It defaults to a
 dependency-free character n-gram similarity (`pntx.dedup.similarity`); pass
@@ -225,10 +249,11 @@ known to be sensitive to this), then divides each real prediction by that baseli
 renormalizes. Pass `LLMPromptingClassifier(..., calibrate=False)` to disable it and get the raw,
 uncalibrated softmax instead.
 
-`OverSampler` and `SyntheticSampler` don't take a `Selector`; instead their
-`sample_method` constructor argument picks a *budget-based* sampling strategy (a full
-port of semaxis's own `sample_method`/`embedding_model` for `OverSampler`;
-`SyntheticSampler` reuses the same mechanism for its positive-only exemplar sampling):
+The `pn2t` over-samplers don't take a `Selector`; instead their `sample_method`
+constructor argument picks a *budget-based* sampling strategy (a full port of semaxis's
+own `sample_method`/`embedding_model` for `HardPositiveOverSampler`;
+`TypicalPositiveOverSampler` reuses the same mechanism for its positive-only exemplar
+sampling):
 
 - **`"random"`** (default) — a uniform random subset, filled until the token budget
   runs out (`BudgetSelector` under the hood).
@@ -238,7 +263,7 @@ port of semaxis's own `sample_method`/`embedding_model` for `OverSampler`;
   balancing representativeness and diversity.
 
 ```python
-sampler = OverSampler(
+sampler = HardPositiveOverSampler(
     backend="llama",
     backend_kwargs={"model_path": "model.gguf"},
     sample_method="votek",

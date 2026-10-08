@@ -1,4 +1,4 @@
-# Issue Candidate: Counterfactual minimal-edit sampler for pn2t
+# Issue Candidate: Counterfactual minimal-edit over-sampler for pn2t
 
 ## Status
 
@@ -6,7 +6,7 @@ Draft.
 
 ## Motivation
 
-`pn2t.OverSampler` generates *new* hard positives from a boundary-feature
+`pn2t.HardPositiveOverSampler` generates *new* hard positives from a boundary-feature
 analysis. There's no direct evidence that this specific mechanism improves a
 classifier's robustness. Counterfactually-augmented data (CAD), on the other
 hand, does have that evidence: take an existing example, make the smallest
@@ -39,9 +39,11 @@ same `(X, y)` contract and the same `fit_resample` interface.
 
 ## Proposed Scope
 
-A new, independent class `pn2t.CounterfactualSampler`. It is a separate
-class rather than an `OverSampler` mode, following the `SyntheticSampler`
-precedent: the objective differs, so it gets its own class.
+A new, independent class `pn2t.CounterfactualOverSampler`, a subclass of
+`BaseLLMOverSampler`. This follows the pn2t family rule (CLAUDE.md, modelled
+on imbalanced-learn): one class per generation algorithm, named
+`<Name>OverSampler`. A different generation mechanism gets its own class
+rather than a mode of `HardPositiveOverSampler`.
 
 - `fit_resample(X, y)`: same contract as the other samplers (binary `y`,
   `resolve_binary_labels`, `pos_label`, both classes ≥ 1).
@@ -63,8 +65,9 @@ precedent: the objective differs, so it gets its own class.
   reject no-op edits. Dependency-free, language-agnostic, and matches the
   existing `pntx.dedup` style.
 - Exact-match dedup against `X` and previously accepted outputs (same as
-  `OverSampler`).
-- `n_synthesized=None` → balance classes, same as `OverSampler`. Pivot
+  `HardPositiveOverSampler`; inherited from `BaseLLMOverSampler`).
+- `sampling_strategy="auto"` (default) → balance classes, same as
+  `HardPositiveOverSampler`; inherited from the base. Pivot
   selection uses the existing `sample_method` machinery on the negative pool.
 - `generation_result_` (pydantic): list of
   `(source_text, edited_text, changed_spans)` so pairs are auditable.
@@ -85,6 +88,35 @@ precedent: the objective differs, so it gets its own class.
     vote (NLI), never the editor. The difference is that a model, unlike a
     human judge, carries the model-in-the-loop bias [[gardner-2020]] §2.4
     warns about.
+
+    **Fitting: clone + cross-fitting, controlled by `verify_cv`** (decided).
+    The verifier is judged as the *pre-augmentation* model: it is fitted only
+    on the original `(X, y)`, never on generated edits. A naive
+    `clone(verify).fit(X, y)` would leak the pivot, though. The verifier
+    would have learned the very negative it is now judging a minimal edit
+    of, and near-duplicates of training points tend to get their training
+    label. This biases it toward rejecting correct flips. The bias is
+    especially strong for `LLMPromptingClassifier` with `NearestSelector`,
+    which will put the pivot itself in the prompt as a negative exemplar, and
+    for an overfitted `FineTuningClassifier`. So, in the same spirit as
+    `cross_val_predict`:
+    - `verify_cv=<int K>` (default `5`): split `(X, y)` with
+      `StratifiedKFold(K)` (seeded by `random_state`). Fit one `clone(verify)` per
+      fold on the other K−1 folds. Judge each edit with the clone whose
+      training data excludes the edit's pivot. No verifier ever saw the
+      pivot it judges. Clones are fitted lazily, only for folds that
+      actually supply pivots. If `K` exceeds the smaller class count,
+      raise `ValueError` (same constraint as sklearn's `StratifiedKFold`).
+    - `verify_cv="prefit"`: use the passed classifier as-is, without cloning
+      or fitting (same convention as `CalibratedClassifierCV(cv="prefit")`).
+      This is the escape hatch when re-fitting is expensive, e.g. a
+      `FineTuningClassifier` trained elsewhere. The user is then responsible
+      for leakage.
+    - Cost note: K fits per `fit_resample`. Negligible for
+      `LLMPromptingClassifier` (fit only stores pools); K full training runs
+      for `FineTuningClassifier`, so documentation should point such users
+      to a small K or `"prefit"`.
+    - `verify_cv` is ignored for `verify="none"`/`"self"`.
   - Rejected edits and their reasons are kept in `generation_result_` so the
     rejection rate per strategy is observable.
 
@@ -115,17 +147,23 @@ cost. If two strategies are close, prefer the cheaper one.
   - no-op edit rejected;
   - exact-duplicate rejected;
   - batch cap reached → warning;
-  - `n_synthesized=None` balance computation;
+  - `sampling_strategy="auto"` balance computation;
   - `save`/`load` round trip;
   - Japanese and English cases for the minimality filter.
 - Positives are never used as pivots (direct prompt-content test, analogous
-  to `SyntheticSampler`'s "negatives never in prompt" test).
+  to `TypicalPositiveOverSampler`'s "negatives never in prompt" test).
 - Generated texts are labelled with the resolved positive label, not `1`.
 - Each `verify` strategy is unit-tested: `"none"` accepts everything that
   passes the minimality/dedup filters; `"self"` rejects edits self-assessed
   as not positive; a classifier verifier rejects edits it predicts as
   negative (using a stub classifier). Rejections are recorded in
   `generation_result_`. An invalid `verify` value raises `ValueError`.
+- Cross-fitting is tested with a recording stub classifier:
+  - each edit is judged by a clone whose training data excludes its pivot;
+  - the user's `verify` instance itself is never fitted (only clones are);
+  - generated edits are never in any clone's training data;
+  - `verify_cv="prefit"` uses the instance unchanged, with no clone or fit;
+  - `K` greater than the smaller class count raises `ValueError`.
 - The pilot benchmark in "Choosing the `verify` default" has been run and
   its result recorded (e.g. in `benchmarks/` or `research/reports/`) before
   the default is fixed.
@@ -144,20 +182,16 @@ cost. If two strategies are close, prefer the cheaper one.
 
 ## Open Questions
 
-1. **Classifier verifier: fitted or fit-on-the-fly?** Should
-   `verify=<classifier>` require an already-fitted estimator, or should
-   `fit_resample` `clone()` it and fit it on `(X, y)` itself? Fitting
-   in-place is more convenient but couples the verifier to the same data the
-   edits come from. (The strategy choice itself, none/self/classifier, is
-   settled: all three are supported, with the default chosen by benchmark.
-   See "Choosing the `verify` default".)
-2. **Relationship to `OverSampler`.** Should `OverSampler` eventually offer
-   this as a strategy, or should the two stay fully separate? Separate seems
-   cleaner until benchmarks show which is more useful.
-3. **Long texts.** Kaushik filtered out the longest 20% of reviews, and
+Settled so far: verification strategy (all three supported; default chosen
+by benchmark) and classifier fitting (clone + cross-fitting via `verify_cv`,
+with `"prefit"` escape hatch), and the class's place in the family (its own
+`CounterfactualOverSampler`, not a `HardPositiveOverSampler` mode). See
+"Proposed Scope".
+
+1. **Long texts.** Kaushik filtered out the longest 20% of reviews, and
    editor agreement drops with length. Should pivots be capped by token
    length, or should `max_edit_ratio` scale with length?
-4. **Default `max_edit_ratio`.** It needs an empirical value; Kaushik doesn't
+2. **Default `max_edit_ratio`.** It needs an empirical value; Kaushik doesn't
    report edit sizes directly. Pick it from a small pilot on IMDb CAD data
    (the released revised split gives real human edit ratios to calibrate
    against).

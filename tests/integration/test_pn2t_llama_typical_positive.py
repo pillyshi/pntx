@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from pntx.backends.llama import LlamaCppBackend
-from pntx.pn2t import OverSampler
+from pntx.pn2t import TypicalPositiveOverSampler
 
 from ..conftest import SAMPLE_NEGATIVE, SAMPLE_POSITIVE
 
 
-def test_fit_resample_generates_requested_number_of_hard_positives(
+def test_fit_resample_generates_requested_number_of_synthetic_texts(
     llama_backend: LlamaCppBackend,
 ) -> None:
     X = SAMPLE_POSITIVE + SAMPLE_NEGATIVE
     y = [1] * len(SAMPLE_POSITIVE) + [0] * len(SAMPLE_NEGATIVE)
-    sampler = OverSampler(backend=llama_backend, n_synthesized=2, batch_size=2)
+    sampler = TypicalPositiveOverSampler(
+        backend=llama_backend, sampling_strategy={1: len(SAMPLE_POSITIVE) + 2}, batch_size=2
+    )
 
     X_aug, y_aug = sampler.fit_resample(X, y)
 

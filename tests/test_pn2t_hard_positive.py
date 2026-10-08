@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from sklearn.base import clone
 
-from pntx.pn2t import OverSampler
+from pntx.pn2t import HardPositiveOverSampler
 
 from .conftest import SAMPLE_NEGATIVE, SAMPLE_POSITIVE, FakeBackend
 
@@ -34,9 +34,16 @@ def _pools() -> tuple[list[str], list[int]]:
     return X, y
 
 
+def _generate(
+    n: int, n_pos: int = len(SAMPLE_POSITIVE), pos_label: object = 1
+) -> dict[object, int]:
+    """sampling_strategy asking for ``n`` new positives on top of ``n_pos``."""
+    return {pos_label: n_pos + n}
+
+
 def test_fit_resample_requires_exactly_two_classes() -> None:
     X, _ = _pools()
-    sampler = OverSampler(backend=FakeBackend())
+    sampler = HardPositiveOverSampler(backend=FakeBackend())
     with pytest.raises(ValueError, match="exactly 2 classes"):
         sampler.fit_resample(X, (["a", "b", "c"] * (len(X) // 3 + 1))[: len(X)])
     with pytest.raises(ValueError, match="exactly 2 classes"):
@@ -49,7 +56,7 @@ def test_fit_resample_accepts_alternate_binary_label_encodings() -> None:
     X = SAMPLE_POSITIVE + SAMPLE_NEGATIVE
     y = [1] * len(SAMPLE_POSITIVE) + [-1] * len(SAMPLE_NEGATIVE)
     backend = FakeBackend(complete_responses=[_canned([_hp("new hard positive")])])
-    sampler = OverSampler(backend=backend, n_synthesized=1, batch_size=1)
+    sampler = HardPositiveOverSampler(backend=backend, sampling_strategy=_generate(1), batch_size=1)
     X_aug, y_aug = sampler.fit_resample(X, y)
     assert X_aug[len(X) :] == ["new hard positive"]
     assert y_aug[len(X) :] == [1]
@@ -58,26 +65,31 @@ def test_fit_resample_accepts_alternate_binary_label_encodings() -> None:
 def test_fit_resample_requires_pos_label_for_ambiguous_string_labels() -> None:
     X = SAMPLE_POSITIVE + SAMPLE_NEGATIVE
     y = ["spam"] * len(SAMPLE_POSITIVE) + ["ham"] * len(SAMPLE_NEGATIVE)
-    sampler = OverSampler(backend=FakeBackend())
+    sampler = HardPositiveOverSampler(backend=FakeBackend())
     with pytest.raises(ValueError, match="pass pos_label"):
         sampler.fit_resample(X, y)
 
     backend = FakeBackend(complete_responses=[_canned([_hp("new hard positive")])])
-    sampler = OverSampler(backend=backend, n_synthesized=1, batch_size=1, pos_label="spam")
+    sampler = HardPositiveOverSampler(
+        backend=backend,
+        sampling_strategy=_generate(1, pos_label="spam"),
+        batch_size=1,
+        pos_label="spam",
+    )
     X_aug, y_aug = sampler.fit_resample(X, y)
     assert X_aug[len(X) :] == ["new hard positive"]
     assert y_aug[len(X) :] == ["spam"]
 
 
 def test_fit_resample_requires_matching_lengths() -> None:
-    sampler = OverSampler(backend=FakeBackend())
+    sampler = HardPositiveOverSampler(backend=FakeBackend())
     with pytest.raises(ValueError, match="same length"):
         sampler.fit_resample(["a", "b"], [1])
 
 
-def test_n_synthesized_zero_returns_original_data_unchanged() -> None:
+def test_sampling_strategy_requesting_no_new_samples_returns_original_data() -> None:
     X, y = _pools()
-    sampler = OverSampler(backend=FakeBackend(), n_synthesized=0)
+    sampler = HardPositiveOverSampler(backend=FakeBackend(), sampling_strategy=_generate(0))
     X_aug, y_aug = sampler.fit_resample(X, y)
     assert X_aug == X
     assert y_aug == y
@@ -89,7 +101,7 @@ def test_fit_resample_happy_path_appends_generated_positives() -> None:
     backend = FakeBackend(
         complete_responses=[_canned([_hp("new hard positive 1"), _hp("new hard positive 2")])]
     )
-    sampler = OverSampler(backend=backend, n_synthesized=2, batch_size=2)
+    sampler = HardPositiveOverSampler(backend=backend, sampling_strategy=_generate(2), batch_size=2)
     X_aug, y_aug = sampler.fit_resample(X, y)
 
     assert X_aug[: len(X)] == X
@@ -99,13 +111,11 @@ def test_fit_resample_happy_path_appends_generated_positives() -> None:
     assert sampler.generation_result_.positive_features == ["warmth"]
 
 
-def test_n_synthesized_none_balances_classes() -> None:
+def test_default_sampling_strategy_auto_balances_classes() -> None:
     X = SAMPLE_POSITIVE[:1] + SAMPLE_NEGATIVE  # 1 positive, 3 negative -> need 2 to balance
     y = [1] + [0] * len(SAMPLE_NEGATIVE)
-    backend = FakeBackend(
-        complete_responses=[_canned([_hp("gen 1"), _hp("gen 2")])]
-    )
-    sampler = OverSampler(backend=backend, batch_size=2)
+    backend = FakeBackend(complete_responses=[_canned([_hp("gen 1"), _hp("gen 2")])])
+    sampler = HardPositiveOverSampler(backend=backend, batch_size=2)
     X_aug, y_aug = sampler.fit_resample(X, y)
     assert len(X_aug) == len(X) + 2
     assert y_aug.count(1) == 3
@@ -121,7 +131,7 @@ def test_exact_match_dedup_rejects_and_retries() -> None:
             _canned([_hp("accepted-2")]),
         ]
     )
-    sampler = OverSampler(backend=backend, n_synthesized=2, batch_size=2)
+    sampler = HardPositiveOverSampler(backend=backend, sampling_strategy=_generate(2), batch_size=2)
     X_aug, y_aug = sampler.fit_resample(X, y)
     generated = X_aug[len(X) :]
     assert duplicate_of_existing not in generated
@@ -134,7 +144,9 @@ def test_deduplicate_false_accepts_everything() -> None:
     backend = FakeBackend(
         complete_responses=[_canned([_hp(duplicate_of_existing), _hp("also new")])]
     )
-    sampler = OverSampler(backend=backend, n_synthesized=2, batch_size=2, deduplicate=False)
+    sampler = HardPositiveOverSampler(
+        backend=backend, sampling_strategy=_generate(2), batch_size=2, deduplicate=False
+    )
     X_aug, _ = sampler.fit_resample(X, y)
     assert X_aug[len(X) :] == [duplicate_of_existing, "also new"]
 
@@ -142,7 +154,7 @@ def test_deduplicate_false_accepts_everything() -> None:
 def test_shortfall_after_max_batches_warns() -> None:
     X, y = _pools()
     backend = FakeBackend(complete_responses=[])  # complete() returns "" -> always fails to parse
-    sampler = OverSampler(backend=backend, n_synthesized=2, batch_size=1)
+    sampler = HardPositiveOverSampler(backend=backend, sampling_strategy=_generate(2), batch_size=1)
     with pytest.warns(UserWarning, match="expected"):
         X_aug, y_aug = sampler.fit_resample(X, y)
     assert X_aug == X
@@ -154,7 +166,9 @@ def test_max_tokens_is_forwarded_to_backend_complete() -> None:
     backend = FakeBackend(
         complete_responses=[_canned([_hp("new hard positive 1"), _hp("new hard positive 2")])]
     )
-    sampler = OverSampler(backend=backend, n_synthesized=2, batch_size=2, max_tokens=777)
+    sampler = HardPositiveOverSampler(
+        backend=backend, sampling_strategy=_generate(2), batch_size=2, max_tokens=777
+    )
     sampler.fit_resample(X, y)
     assert backend.complete_max_tokens == [777]
 
@@ -166,8 +180,8 @@ def test_context_limit_too_small_for_max_tokens_raises() -> None:
     # (e.g. 4096) combined with the old hardcoded max_tokens=4096 default
     # left zero room for the prompt and every batch silently failed. Now
     # this mismatch is caught up front with a clear error instead.
-    sampler = OverSampler(
-        backend=FakeBackend(), n_synthesized=2, context_limit=4096, max_tokens=4096
+    sampler = HardPositiveOverSampler(
+        backend=FakeBackend(), sampling_strategy=_generate(2), context_limit=4096, max_tokens=4096
     )
     with pytest.raises(ValueError, match="leaves no token budget for exemplars"):
         sampler.fit_resample(X, y)
@@ -180,8 +194,11 @@ def test_no_positive_example_fits_budget_raises() -> None:
     # up front instead of silently sending "(none)" as the positive exemplars.
     X = ["x" * 50, "ok"]
     y = [1, 0]
-    sampler = OverSampler(
-        backend=FakeBackend(), n_synthesized=1, context_limit=600, max_tokens=90
+    sampler = HardPositiveOverSampler(
+        backend=FakeBackend(),
+        sampling_strategy=_generate(1, n_pos=1),
+        context_limit=600,
+        max_tokens=90,
     )
     with pytest.raises(ValueError, match="no positive example fits"):
         sampler.fit_resample(X, y)
@@ -190,8 +207,11 @@ def test_no_positive_example_fits_budget_raises() -> None:
 def test_no_negative_example_fits_budget_raises() -> None:
     X = ["ok", "y" * 50]
     y = [1, 0]
-    sampler = OverSampler(
-        backend=FakeBackend(), n_synthesized=1, context_limit=600, max_tokens=90
+    sampler = HardPositiveOverSampler(
+        backend=FakeBackend(),
+        sampling_strategy=_generate(1, n_pos=1),
+        context_limit=600,
+        max_tokens=90,
     )
     with pytest.raises(ValueError, match="no negative example fits"):
         sampler.fit_resample(X, y)
@@ -231,8 +251,12 @@ def test_exemplar_sampling_balances_positive_and_negative_counts(
     y = [1] * len(pos_texts) + [0] * len(neg_texts)
 
     backend = FakeBackend(complete_responses=[_canned([_hp("gen 1")])])
-    sampler = OverSampler(
-        backend=backend, n_synthesized=1, batch_size=1, context_limit=624, max_tokens=100
+    sampler = HardPositiveOverSampler(
+        backend=backend,
+        sampling_strategy=_generate(1, n_pos=len(pos_texts)),
+        batch_size=1,
+        context_limit=624,
+        max_tokens=100,
     )
     sampler.fit_resample(X, y)
 
@@ -243,7 +267,9 @@ def test_exemplar_sampling_balances_positive_and_negative_counts(
 
 def test_invalid_sample_method_raises() -> None:
     X, y = _pools()
-    sampler = OverSampler(backend=FakeBackend(), n_synthesized=2, sample_method="bogus")
+    sampler = HardPositiveOverSampler(
+        backend=FakeBackend(), sampling_strategy=_generate(2), sample_method="bogus"
+    )
     with pytest.raises(ValueError, match="sample_method"):
         sampler.fit_resample(X, y)
 
@@ -270,9 +296,9 @@ def test_fit_resample_with_embedding_backed_sample_method(
     backend = FakeBackend(
         complete_responses=[_canned([_hp("new hard positive 1"), _hp("new hard positive 2")])]
     )
-    sampler = OverSampler(
+    sampler = HardPositiveOverSampler(
         backend=backend,
-        n_synthesized=2,
+        sampling_strategy=_generate(2),
         batch_size=2,
         sample_method=sample_method,
         embedding_model="fake-model",
@@ -284,7 +310,7 @@ def test_fit_resample_with_embedding_backed_sample_method(
 
 
 def test_backend_kwargs_with_instance_backend_raises() -> None:
-    sampler = OverSampler(backend=FakeBackend(), backend_kwargs={"foo": "bar"})
+    sampler = HardPositiveOverSampler(backend=FakeBackend(), backend_kwargs={"foo": "bar"})
     with pytest.raises(TypeError, match="backend_kwargs"):
         sampler.fit_resample(*_pools())
 
@@ -294,27 +320,27 @@ def test_save_and_load_round_trip(tmp_path: Path) -> None:
     backend = FakeBackend(
         complete_responses=[_canned([_hp("new hard positive 1"), _hp("new hard positive 2")])]
     )
-    sampler = OverSampler(backend=backend, n_synthesized=2, batch_size=2)
+    sampler = HardPositiveOverSampler(backend=backend, sampling_strategy=_generate(2), batch_size=2)
     sampler.fit_resample(X, y)
 
     path = tmp_path / "hard_positives.json"
     sampler.save(path)
 
-    loaded = OverSampler.load(path, backend=backend)
+    loaded = HardPositiveOverSampler.load(path, backend=backend)
     assert loaded.generation_result_ == sampler.generation_result_
 
 
 def test_save_before_fit_raises_not_fitted() -> None:
     from sklearn.exceptions import NotFittedError
 
-    sampler = OverSampler(backend=FakeBackend())
+    sampler = HardPositiveOverSampler(backend=FakeBackend())
     with pytest.raises(NotFittedError):
         sampler.save("does-not-matter.json")
 
 
 def test_clone_reuses_the_same_backend_instance_without_deepcopy() -> None:
     backend = FakeBackend()
-    sampler = OverSampler(backend=backend)
+    sampler = HardPositiveOverSampler(backend=backend)
     cloned = clone(sampler)
     assert cloned.backend is backend
     assert cloned is not sampler
@@ -325,5 +351,7 @@ def test_fit_resample_does_not_require_imbalanced_learn_installed() -> None:
 
     assert "imblearn" not in sys.modules
     X, y = _pools()
-    OverSampler(backend=FakeBackend(), n_synthesized=0).fit_resample(X, y)
+    HardPositiveOverSampler(backend=FakeBackend(), sampling_strategy=_generate(0)).fit_resample(
+        X, y
+    )
     assert "imblearn" not in sys.modules

@@ -19,7 +19,7 @@ class BoundaryFeature(BaseModel):
 
 
 class HardPositiveGenerationResult(BaseModel):
-    """Full structured output of one ``OverSampler`` generation batch."""
+    """Full structured output of one ``HardPositiveOverSampler`` generation batch."""
 
     positive_features: list[str]
     negative_features: list[str]
@@ -35,7 +35,7 @@ class SyntheticText(BaseModel):
 
 
 class SyntheticGenerationResult(BaseModel):
-    """Full structured output of one ``SyntheticSampler`` generation batch."""
+    """Full structured output of one ``TypicalPositiveOverSampler`` generation batch."""
 
     style_features: list[str]
     content_features: list[str]

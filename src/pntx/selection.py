@@ -21,7 +21,7 @@ def default_tokenizer(text: str) -> int:
     (e.g. ``LlamaCppBackend`` has one; other backends may not).
 
     Shared by every budget-aware sampler in the package (``t2pn.LLMPromptingClassifier``,
-    ``pn2t.OverSampler``, ``pn2t.SyntheticSampler``) so they all fall back to
+    ``pn2t.HardPositiveOverSampler``, ``pn2t.TypicalPositiveOverSampler``) so they all fall back to
     the same estimate.
     """
     return len(text) // DEFAULT_CHARS_PER_TOKEN + 1
