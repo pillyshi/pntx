@@ -26,7 +26,11 @@ same `(X, y)` contract and the same `fit_resample` interface.
   same amount of original data. Adding 1.7k revised reviews to 19k originals
   substantially improves accuracy on revised data. Spurious features stop
   being predictive once pairs are combined. All edits there were
-  human-written; LLM-generated edits are untested in that paper.
+  human-written; LLM-generated edits are untested in that paper. Edits were
+  always checked by someone other than the editor. For sentiment, the
+  authors inspected every revision and rejected ~2%. For NLI, three other
+  crowd workers voted, with the authors breaking ties, and ~9% was
+  discarded.
 - [[gardner-2020]] (`research/notes/gardner-2020.md`): minimal label-flipping
   edits are exactly what probes a model's *local* decision boundary. Models
   near SOTA lose 5–25 points on such sets while humans don't. §2.4 notes that
@@ -65,6 +69,43 @@ precedent: the objective differs, so it gets its own class.
 - `generation_result_` (pydantic): list of
   `(source_text, edited_text, changed_spans)` so pairs are auditable.
 - `save`/`load`: same hand-written JSON pattern as the other samplers.
+- **Label verification is a parameter, not a fixed choice.** All three
+  strategies are supported; the default is decided by benchmark (see
+  "Choosing the `verify` default" below):
+  - `verify="none"`: trust the edit prompt; accept as-is.
+  - `verify="self"`: the structured output carries a self-assessed label
+    for each edit. Reject edits the LLM itself doesn't judge positive. No
+    extra backend calls.
+  - `verify=<classifier>`: any object with sklearn-style `predict`
+    (duck-typed), e.g. a `t2pn.LLMPromptingClassifier` on the shared backend
+    or a `t2pn.FineTuningClassifier`. Edits it doesn't predict as positive
+    are rejected and retried. This is the closest analogue to the source
+    papers, where an *independent* judge verified edits: Kaushik et al. used
+    the authors (sentiment) or a separate set of crowd workers by majority
+    vote (NLI), never the editor. The difference is that a model, unlike a
+    human judge, carries the model-in-the-loop bias [[gardner-2020]] §2.4
+    warns about.
+  - Rejected edits and their reasons are kept in `generation_result_` so the
+    rejection rate per strategy is observable.
+
+### Choosing the `verify` default
+
+Decide by a pilot benchmark before the first release, not by argument:
+
+1. **Label-flip precision.** On a sample of IMDb negatives that have human
+   counterfactual revisions (Kaushik et al. release), generate LLM edits.
+   Human-judge (or use the paired human revision's label as reference) which
+   edits actually flipped. For each strategy, report what fraction of
+   failed flips it catches and what fraction of good edits it wrongly
+   rejects.
+2. **Hardness retained.** For `verify=<classifier>`, measure how much
+   it skews accepted edits toward ones the downstream classifier already
+   gets right (the bias concern), compared with `none`/`self`.
+3. **Cost.** Backend calls and wall time per accepted edit on
+   `LlamaCppBackend`.
+
+Pick the default with the best precision/retention trade-off at acceptable
+cost. If two strategies are close, prefer the cheaper one.
 
 ## Acceptance Criteria
 
@@ -80,6 +121,14 @@ precedent: the objective differs, so it gets its own class.
 - Positives are never used as pivots (direct prompt-content test, analogous
   to `SyntheticSampler`'s "negatives never in prompt" test).
 - Generated texts are labelled with the resolved positive label, not `1`.
+- Each `verify` strategy is unit-tested: `"none"` accepts everything that
+  passes the minimality/dedup filters; `"self"` rejects edits self-assessed
+  as not positive; a classifier verifier rejects edits it predicts as
+  negative (using a stub classifier). Rejections are recorded in
+  `generation_result_`. An invalid `verify` value raises `ValueError`.
+- The pilot benchmark in "Choosing the `verify` default" has been run and
+  its result recorded (e.g. in `benchmarks/` or `research/reports/`) before
+  the default is fixed.
 - Works in `imblearn.pipeline.Pipeline` via duck-typed `fit_resample`.
 - An integration test (skipped by default) runs it end-to-end on
   `LlamaCppBackend`.
@@ -87,7 +136,6 @@ precedent: the objective differs, so it gets its own class.
 ## Out Of Scope
 
 - Positive → negative edits (negative-side generation; CLAUDE.md scope).
-- Classifier-in-the-loop filtering by default (see Open Questions).
 - Benchmarking the effect on a downstream classifier. That should be its own
   idea/issue (counterfactual test set à la Kaushik Table 5 / Gardner
   contrast consistency).
@@ -96,17 +144,13 @@ precedent: the objective differs, so it gets its own class.
 
 ## Open Questions
 
-1. **Label verification.** Kaushik et al. still rejected ~2% (sentiment) /
-   ~9% (NLI) of *human* edits. How should LLM edits that didn't actually
-   flip the label be caught?
-   - (a) No verification; trust the prompt. Cheapest, noisiest.
-   - (b) Self-check field in the structured output. Cheap, but weak.
-   - (c) Score with a `t2pn.LLMPromptingClassifier` on the shared backend.
-     This is model-in-the-loop, which [[gardner-2020]] §2.4 warns against. It
-     also biases *toward* edits the classifier already gets right, i.e.
-     against the hard cases. This filters for label validity, not hardness,
-     but the tension should be measured, not assumed away.
-   - Leaning: (b) by default, with (c) as an opt-in `verifier=` parameter.
+1. **Classifier verifier: fitted or fit-on-the-fly?** Should
+   `verify=<classifier>` require an already-fitted estimator, or should
+   `fit_resample` `clone()` it and fit it on `(X, y)` itself? Fitting
+   in-place is more convenient but couples the verifier to the same data the
+   edits come from. (The strategy choice itself, none/self/classifier, is
+   settled: all three are supported, with the default chosen by benchmark.
+   See "Choosing the `verify` default".)
 2. **Relationship to `OverSampler`.** Should `OverSampler` eventually offer
    this as a strategy, or should the two stay fully separate? Separate seems
    cleaner until benchmarks show which is more useful.
