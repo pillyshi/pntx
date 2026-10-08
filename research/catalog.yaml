@@ -6,6 +6,7 @@ verification:
   client: pyalex
 source_reports:
 - reports/2026-10-08-cad-contrast-set-followups-llm.md
+- reports/2026-10-09-local-llm-clinical-text-augmentation.md
 papers:
 - key: chawla-2002
   title: 'SMOTE: Synthetic Minority Over-sampling Technique'
@@ -975,5 +976,307 @@ papers:
   relevance: to_classify
   priority: to_review
   rationale: 'Negative result: EDA and back-translation do not consistently help pretrained transformers (BERT/XLNet/RoBERTa); sets expectations for EDA as a FineTuningClassifier baseline.'
+  note_status: pending
+  pdf_status: missing
+- key: tang-2023
+  title: Does Synthetic Data Generation of LLMs Help Clinical Text Mining?
+  authors:
+  - Ruixiang Tang
+  - Xiaotian Han
+  - Xiaoqian Jiang
+  - Xia Hu
+  year: 2023
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2303.04360
+    openalex: W4323709074
+  relevance: to_classify
+  priority: to_review
+  rationale: 'ChatGPT-generated labelled clinical data + fine-tuned local model beats direct ChatGPT use (privacy-motivated).'
+  note_status: pending
+  pdf_status: missing
+- key: li-2023-2
+  title: 'Synthetic Data Generation with Large Language Models for Text Classification: Potential and Limitations'
+  authors:
+  - Zhuoyan Li
+  - Hangxiao Zhu
+  - Zhuoran Lu
+  - Ming Yin
+  year: 2023
+  publication_type: conference-paper
+  venue: Conference on Empirical Methods in Natural Language Processing (EMNLP)
+  identifiers:
+    doi: 10.18653/v1/2023.emnlp-main.647
+    openalex: W4389519059
+  relevance: to_classify
+  priority: to_review
+  rationale: 'LLM-synthetic data usefulness drops with task/instance subjectivity; guides which tasks suit pn2t.'
+  note_status: pending
+  pdf_status: missing
+- key: li-2023-3
+  title: 'Two Directions for Clinical Data Generation with Large Language Models: Data-to-Label and Label-to-Data'
+  authors:
+  - Rumeng Li
+  - Xun Wang
+  - Hong Qing Yu
+  year: 2023
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2023.findings-emnlp.474
+    openalex: W4389520213
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Sentence-level binary AD-symptom detection: guideline-only GPT-4 data (bronze) and local-Llama-65B-labelled MIMIC data (silver) improve over gold; bronze low diversity. Main text read.'
+  note_status: pending
+  pdf_status: missing
+- key: xu-2024
+  title: 'Knowledge-Infused Prompting: Assessing and Advancing Clinical Text Data Generation with Large Language Models'
+  authors:
+  - Ran Xu
+  - Hejie Cui
+  - Yue Yu
+  - Xuan Kan
+  - Wenqi Shi
+  - Yuchen Zhuang
+  - May Dongmei Wang
+  - Wei Jin
+  - Joyce C. Ho
+  - Carl Yang
+  year: 2024
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2024.findings-acl.916
+    openalex: W4402669773
+  relevance: to_classify
+  priority: to_review
+  rationale: 'ClinGen: few-shot clinical generation has distribution shift / low diversity; topic x style composition fixes it (+7.7-8.7%). Main text read.'
+  note_status: pending
+  pdf_status: missing
+- key: kweon-2024
+  title: Publicly Shareable Clinical Large Language Model Built on Synthetic Clinical Notes
+  authors:
+  - Sunjun Kweon
+  - Junu Kim
+  - Jiyoun Kim
+  - Sujeong Im
+  - Eunbyeol Cho
+  - Seongsu Bae
+  - Jungwoo Oh
+  - Gyubok Lee
+  - Jong Hak Moon
+  - Seng Chan You
+  - Seungjin Baek
+  - Chang Hoon Han
+  - Yoon Bin Jung
+  - Yohan Jo
+  - Edward Choi
+  year: 2024
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2024.findings-acl.305
+    openalex: W4402683957
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Asclepius: synthetic clinical notes to train a publicly shareable clinical LLM (shareability goal like TypicalPositiveOverSampler).'
+  note_status: pending
+  pdf_status: missing
+- key: frayling-2024
+  title: Zero-shot and Few-shot Generation Strategies for Artificial Clinical Records
+  authors:
+  - Erlend Frayling
+  - Jake Lever
+  - Graham McDonald
+  year: 2024
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2403.08664
+    openalex: W4392866637
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Llama 2 zero/few-shot vs fine-tuned generation of synthetic clinical narratives without training on patient data.'
+  note_status: pending
+  pdf_status: missing
+- key: wiest-2024
+  title: Privacy-preserving large language models for structured medical information retrieval
+  authors:
+  - Isabella C. Wiest
+  - Dyke Ferber
+  - Jiefu Zhu
+  - Marko van Treeck
+  - Sonja K. Meyer
+  - Radhika Juglan
+  - Zunamys Itzell Carrero
+  - Daniel Paech
+  - Jens Kleesiek
+  - Matthias Ebert
+  - Daniel Truhn
+  - Jakob Nikolas Kather
+  year: 2024
+  publication_type: article
+  venue: npj Digital Medicine
+  identifiers:
+    doi: 10.1038/s41746-024-01233-2
+    openalex: W4402713323
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Local Llama 2 pipeline for privacy-preserving extraction from MIMIC-IV histories; local-deployment precedent.'
+  note_status: pending
+  pdf_status: missing
+- key: vaid-2024
+  title: Local large language models for privacy-preserving accelerated review of historic echocardiogram reports
+  authors:
+  - Akhil Vaid
+  - Son Q. Duong
+  - Joshua Lampert
+  - Patricia Kovatch
+  - Robert M. Freeman
+  - Edgar Argulian
+  - Lori B. Croft
+  - Stamatios Lerakis
+  - Martin E. Goldman
+  - Rohan Khera
+  - Girish N. Nadkarni
+  year: 2024
+  publication_type: article
+  venue: Journal of the American Medical Informatics Association
+  identifiers:
+    doi: 10.1093/jamia/ocae085
+    openalex: W4396519801
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Local Llama-2-70B for privacy-preserving review of echocardiogram reports; local-deployment precedent.'
+  note_status: pending
+  pdf_status: missing
+- key: woo-2025
+  title: Synthetic data distillation enables the extraction of clinical information at scale
+  authors:
+  - Elizabeth Geena Woo
+  - Michael C. Burkhart
+  - Emily Alsentzer
+  - Brett K. Beaulieu‐Jones
+  year: 2025
+  publication_type: article
+  venue: npj Digital Medicine
+  identifiers:
+    doi: 10.1038/s41746-025-01681-4
+    openalex: W4410259312
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Synthetic data distillation 70B->8B Llama for clinical extraction on cheap local hardware.'
+  note_status: pending
+  pdf_status: missing
+- key: li-2026
+  title: 'DualAlign: Generating Clinically Grounded Synthetic Data'
+  authors:
+  - Rumeng Li
+  - Xun Wang
+  - Hong Qing Yu
+  year: 2026
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2026.findings-acl.1405
+    openalex: W4414261039
+  relevance: to_classify
+  priority: to_review
+  rationale: 'DualAlign: generation conditioned on aggregate demographics/symptom trajectories beats unconstrained synthetic data at equal size for binary symptom classification (F1 0.72->0.84). Main text read.'
+  note_status: pending
+  pdf_status: missing
+- key: hiebel-2025
+  title: 'Clinical Text Generation: Are We There Yet?'
+  authors:
+  - Nicolas Hiebel
+  - Olivier Ferret
+  - Karën Fort
+  - Aurélie Névéol
+  year: 2025
+  publication_type: review
+  venue: Annual Review of Biomedical Data Science
+  identifiers:
+    doi: 10.1146/annurev-biodatasci-103123-095202
+    openalex: W4408558912
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Review of clinical text generation and reference-free evaluation, incl. synthetic text for secondary use.'
+  note_status: pending
+  pdf_status: missing
+- key: kang-2024
+  title: Synthetic Data Generation with LLM for Improved Depression Prediction
+  authors:
+  - Kang, Andrea
+  - Jiancong Chen
+  - Zoe Lee-Youngzie
+  - Fu, Shuhao
+  year: 2024
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2411.17672
+    openalex: W4404989533
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Open-source LLM generates synthetic data from clinical interview transcripts for depression prediction.'
+  note_status: pending
+  pdf_status: missing
+- key: wang-2024-2
+  title: Towards Adapting Open-Source Large Language Models for Expert-Level Clinical Note Generation
+  authors:
+  - Hanyin Wang
+  - Chufan Gao
+  - Bolun Liu
+  - Qiping Xu
+  - Guleid Hussein
+  - Mohamad El Labban
+  - Kingsley Iheasirim
+  - Hariprasad Korsapati
+  - Outcalt, Chuck
+  - Sun, Jimeng
+  year: 2024
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2405.00715
+    openalex: W4396653228
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Adapting local Llama-2-13B for clinical note generation; providers prefer small locally hosted models.'
+  note_status: pending
+  pdf_status: missing
+- key: watanabe-2024
+  title: 'Technical Report: Small Language Model for Japanese Clinical and Medicine'
+  authors:
+  - Shogo WATANABE
+  year: 2024
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2412.16423
+    openalex: W4405765843
+  relevance: to_classify
+  priority: to_review
+  rationale: '1B Japanese clinical/medical small LM (NCVC-slm-1); small local Japanese clinical models are viable.'
+  note_status: pending
+  pdf_status: missing
+- key: arihisa-2026
+  title: 'Comparative Analysis of Japanese Clinical Note Styles Between Physicians and Large Language Models Using Identical Psychiatric Cases: Quantitative Text Analysis'
+  authors:
+  - Wataru Arihisa
+  - Tomohiro Nishiyama
+  - Shoko Wakamiya
+  - Eiji Aramaki
+  year: 2026
+  publication_type: article
+  venue: JMIR Formative Research
+  identifiers:
+    doi: 10.2196/85671
+    openalex: W7141316719
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Japanese psychiatric notes: physician vs LLM writing styles differ measurably (realism caveat for Japanese synthetic text).'
   note_status: pending
   pdf_status: missing
