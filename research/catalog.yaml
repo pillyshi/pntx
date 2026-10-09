@@ -7,6 +7,7 @@ verification:
 source_reports:
 - reports/2026-10-08-cad-contrast-set-followups-llm.md
 - reports/2026-10-09-local-llm-clinical-text-augmentation.md
+- reports/2026-10-09-hidden-space-augmentation.md
 papers:
 - key: chawla-2002
   title: 'SMOTE: Synthetic Minority Over-sampling Technique'
@@ -993,7 +994,7 @@ papers:
     openalex: W4323709074
   relevance: to_classify
   priority: to_review
-  rationale: 'ChatGPT-generated labelled clinical data + fine-tuned local model beats direct ChatGPT use (privacy-motivated).'
+  rationale: ChatGPT-generated labelled clinical data + fine-tuned local model beats direct ChatGPT use (privacy-motivated).
   note_status: pending
   pdf_status: missing
 - key: li-2023-2
@@ -1011,7 +1012,7 @@ papers:
     openalex: W4389519059
   relevance: to_classify
   priority: to_review
-  rationale: 'LLM-synthetic data usefulness drops with task/instance subjectivity; guides which tasks suit pn2t.'
+  rationale: LLM-synthetic data usefulness drops with task/instance subjectivity; guides which tasks suit pn2t.
   note_status: pending
   pdf_status: missing
 - key: li-2023-3
@@ -1098,7 +1099,7 @@ papers:
     openalex: W4392866637
   relevance: to_classify
   priority: to_review
-  rationale: 'Llama 2 zero/few-shot vs fine-tuned generation of synthetic clinical narratives without training on patient data.'
+  rationale: Llama 2 zero/few-shot vs fine-tuned generation of synthetic clinical narratives without training on patient data.
   note_status: pending
   pdf_status: missing
 - key: wiest-2024
@@ -1124,7 +1125,7 @@ papers:
     openalex: W4402713323
   relevance: to_classify
   priority: to_review
-  rationale: 'Local Llama 2 pipeline for privacy-preserving extraction from MIMIC-IV histories; local-deployment precedent.'
+  rationale: Local Llama 2 pipeline for privacy-preserving extraction from MIMIC-IV histories; local-deployment precedent.
   note_status: pending
   pdf_status: missing
 - key: vaid-2024
@@ -1149,7 +1150,7 @@ papers:
     openalex: W4396519801
   relevance: to_classify
   priority: to_review
-  rationale: 'Local Llama-2-70B for privacy-preserving review of echocardiogram reports; local-deployment precedent.'
+  rationale: Local Llama-2-70B for privacy-preserving review of echocardiogram reports; local-deployment precedent.
   note_status: pending
   pdf_status: missing
 - key: woo-2025
@@ -1167,7 +1168,7 @@ papers:
     openalex: W4410259312
   relevance: to_classify
   priority: to_review
-  rationale: 'Synthetic data distillation 70B->8B Llama for clinical extraction on cheap local hardware.'
+  rationale: Synthetic data distillation 70B->8B Llama for clinical extraction on cheap local hardware.
   note_status: pending
   pdf_status: missing
 - key: li-2026
@@ -1202,7 +1203,7 @@ papers:
     openalex: W4408558912
   relevance: to_classify
   priority: to_review
-  rationale: 'Review of clinical text generation and reference-free evaluation, incl. synthetic text for secondary use.'
+  rationale: Review of clinical text generation and reference-free evaluation, incl. synthetic text for secondary use.
   note_status: pending
   pdf_status: missing
 - key: kang-2024
@@ -1220,7 +1221,7 @@ papers:
     openalex: W4404989533
   relevance: to_classify
   priority: to_review
-  rationale: 'Open-source LLM generates synthetic data from clinical interview transcripts for depression prediction.'
+  rationale: Open-source LLM generates synthetic data from clinical interview transcripts for depression prediction.
   note_status: pending
   pdf_status: missing
 - key: wang-2024-2
@@ -1244,7 +1245,7 @@ papers:
     openalex: W4396653228
   relevance: to_classify
   priority: to_review
-  rationale: 'Adapting local Llama-2-13B for clinical note generation; providers prefer small locally hosted models.'
+  rationale: Adapting local Llama-2-13B for clinical note generation; providers prefer small locally hosted models.
   note_status: pending
   pdf_status: missing
 - key: watanabe-2024
@@ -1259,7 +1260,7 @@ papers:
     openalex: W4405765843
   relevance: to_classify
   priority: to_review
-  rationale: '1B Japanese clinical/medical small LM (NCVC-slm-1); small local Japanese clinical models are viable.'
+  rationale: 1B Japanese clinical/medical small LM (NCVC-slm-1); small local Japanese clinical models are viable.
   note_status: pending
   pdf_status: missing
 - key: arihisa-2026
@@ -1278,5 +1279,377 @@ papers:
   relevance: to_classify
   priority: to_review
   rationale: 'Japanese psychiatric notes: physician vs LLM writing styles differ measurably (realism caveat for Japanese synthetic text).'
+  note_status: pending
+  pdf_status: missing
+- key: verma-2018
+  title: 'Manifold Mixup: Better Representations by Interpolating Hidden States'
+  authors:
+  - Verma, Vikas
+  - Alex Lamb
+  - Christopher Beckham
+  - Amir Najafi
+  - Ioannis Mitliagkas
+  - Courville, Aaron
+  - David López-Paz
+  - Yoshua Bengio
+  year: 2018
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.1806.05236
+    openalex: W2921861056
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Manifold Mixup: interpolating hidden states smooths decision boundaries; origin of hidden-space mixup.'
+  note_status: pending
+  pdf_status: missing
+- key: guo-2019
+  title: 'Augmenting Data with Mixup for Sentence Classification: An Empirical Study'
+  authors:
+  - Hongyu Guo
+  - Yongyi Mao
+  - Richong Zhang
+  year: 2019
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.1905.08941
+    openalex: W2946411231
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Mixup on word or sentence embeddings for sentence classification (CNN/LSTM).'
+  note_status: pending
+  pdf_status: missing
+- key: chen-2020
+  title: 'MixText: Linguistically-Informed Interpolation of Hidden Space for Semi-Supervised Text Classification'
+  authors:
+  - Jiaao Chen
+  - Zichao Yang
+  - Diyi Yang
+  year: 2020
+  publication_type: conference-paper
+  venue: Annual Meeting of the Association for Computational Linguistics (ACL)
+  identifiers:
+    doi: 10.18653/v1/2020.acl-main.194
+    openalex: W3035542229
+  relevance: to_classify
+  priority: to_review
+  rationale: 'MixText/TMix: BERT hidden-state interpolation, strongest with extremely few labels (semi-supervised).'
+  note_status: pending
+  pdf_status: missing
+- key: sun-2020
+  title: 'Mixup-Transformer: Dynamic Data Augmentation for NLP Tasks'
+  authors:
+  - Lichao Sun
+  - Congying Xia
+  - Wenpeng Yin
+  - Tingting Liang
+  - Philip S. Yu
+  - Lifang He
+  year: 2020
+  publication_type: conference-paper
+  venue: International Conference on Computational Linguistics
+  identifiers:
+    doi: 10.18653/v1/2020.coling-main.305
+    openalex: W3115242847
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Mixup-Transformer: end-to-end hidden mixup during BERT fine-tuning, incl. low-resource GLUE.'
+  note_status: pending
+  pdf_status: missing
+- key: kong-2020
+  title: Calibrated Language Model Fine-Tuning for In- and Out-of-Distribution Data
+  authors:
+  - Lingkai Kong
+  - Haoming Jiang
+  - Yuchen Zhuang
+  - Jie Lyu
+  - Tuo Zhao
+  - Chao Zhang
+  year: 2020
+  publication_type: conference-paper
+  venue: Conference on Empirical Methods in Natural Language Processing (EMNLP)
+  identifiers:
+    doi: 10.18653/v1/2020.emnlp-main.102
+    openalex: W3099142828
+  relevance: to_classify
+  priority: to_review
+  rationale: 'On-/off-manifold regularisation in fine-tuning for in- and out-of-distribution calibration.'
+  note_status: pending
+  pdf_status: missing
+- key: xiao-2026
+  title: 'SFTMix: Elevating Language Model Instruction Tuning with Mixup Recipe'
+  authors:
+  - Yuxin Xiao
+  - Shujian Zhang
+  - Marzyeh Ghassemi
+  - Wenxuan Zhou
+  year: 2026
+  publication_type: conference-paper
+  venue: Annual Meeting of the Association for Computational Linguistics (ACL)
+  identifiers:
+    doi: 10.18653/v1/2026.acl-long.78
+    openalex: W4403324162
+  relevance: to_classify
+  priority: to_review
+  rationale: 'SFTMix: confidence-aware mixup for LLM instruction tuning (generative setting).'
+  note_status: pending
+  pdf_status: missing
+- key: miyato-2016
+  title: Adversarial Training Methods for Semi-Supervised Text Classification
+  authors:
+  - Takeru Miyato
+  - Andrew M. Dai
+  - Ian Goodfellow
+  year: 2016
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.1605.07725
+    openalex: W2556096924
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Adversarial / virtual adversarial training on word embeddings; origin of embedding-space perturbation in NLP.'
+  note_status: pending
+  pdf_status: missing
+- key: zhu-2019
+  title: 'FreeLB: Enhanced Adversarial Training for Natural Language Understanding'
+  authors:
+  - Chen Zhu
+  - Yu Cheng
+  - Zhe Gan
+  - Siqi Sun
+  - Tom Goldstein
+  - Jingjing Liu
+  year: 2019
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.1909.11764
+    openalex: W3006647218
+  relevance: to_classify
+  priority: to_review
+  rationale: 'FreeLB: multi-step adversarial embedding perturbation during fine-tuning (BERT-base GLUE 78.3->79.4).'
+  note_status: pending
+  pdf_status: missing
+- key: jiang-2020
+  title: 'SMART: Robust and Efficient Fine-Tuning for Pre-trained Natural Language Models through Principled Regularized Optimization'
+  authors:
+  - Haoming Jiang
+  - Pengcheng He
+  - Weizhu Chen
+  - Xiaodong Liu
+  - Jianfeng Gao
+  - Tuo Zhao
+  year: 2020
+  publication_type: conference-paper
+  venue: Annual Meeting of the Association for Computational Linguistics (ACL)
+  identifiers:
+    doi: 10.18653/v1/2020.acl-main.197
+    openalex: W2985884876
+  relevance: to_classify
+  priority: to_review
+  rationale: 'SMART: smoothness-inducing adversarial regularisation + trust region against fine-tuning overfitting.'
+  note_status: pending
+  pdf_status: missing
+- key: aghajanyan-2020
+  title: Better Fine-Tuning by Reducing Representational Collapse
+  authors:
+  - Armen Aghajanyan
+  - Akshat Shrivastava
+  - Anchit Gupta
+  - Naman Goyal
+  - Luke Zettlemoyer
+  - Sonal Gupta
+  year: 2020
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2008.03156
+    openalex: W3047763836
+  relevance: to_classify
+  priority: to_review
+  rationale: 'R3F/R4F: random-noise trust-region fine-tuning reducing representational collapse.'
+  note_status: pending
+  pdf_status: missing
+- key: zhou-2021
+  title: 'Virtual Data Augmentation: A Robust and General Framework for Fine-tuning Pre-trained Models'
+  authors:
+  - Kun Zhou
+  - Wayne Xin Zhao
+  - Sirui Wang
+  - Fuzheng Zhang
+  - Wei Wu
+  - Ji-Rong Wen
+  year: 2021
+  publication_type: conference-paper
+  venue: Conference on Empirical Methods in Natural Language Processing (EMNLP)
+  identifiers:
+    doi: 10.18653/v1/2021.emnlp-main.315
+    openalex: W3199907955
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Virtual Data Augmentation: MLM-guided embedding mixtures plus Gaussian noise for robust fine-tuning.'
+  note_status: pending
+  pdf_status: missing
+- key: shen-2020
+  title: A Simple but Tough-to-Beat Data Augmentation Approach for Natural Language Understanding and Generation
+  authors:
+  - Dinghan Shen
+  - Mingzhi Zheng
+  - Yelong Shen
+  - Yanru Qu
+  - Weizhu Chen
+  year: 2020
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2009.13818
+    openalex: W3089659770
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Cutoff: token/feature/span erasure in embeddings + JS consistency; cheap; best supervised single-sentence boost in chen-2023-2.'
+  note_status: pending
+  pdf_status: missing
+- key: chen-2021
+  title: 'HiddenCut: Simple Data Augmentation for Natural Language Understanding with Better Generalizability'
+  authors:
+  - Jiaao Chen
+  - Dinghan Shen
+  - Weizhu Chen
+  - Diyi Yang
+  year: 2021
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2021.acl-long.338
+    openalex: W3176265725
+  relevance: to_classify
+  priority: to_review
+  rationale: 'HiddenCut: dropping contiguous hidden-state spans for better OOD generalisation.'
+  note_status: pending
+  pdf_status: missing
+- key: liang-2021
+  title: 'R-Drop: Regularized Dropout for Neural Networks'
+  authors:
+  - Xiaobo Liang
+  - Lijun Wu
+  - Juntao Li
+  - Yue Wang
+  - Qi Meng
+  - Tao Qin
+  - Wei Chen
+  - Min Zhang
+  - Tie‐Yan Liu
+  year: 2021
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2106.14448
+    openalex: W3174864715
+  relevance: to_classify
+  priority: to_review
+  rationale: 'R-Drop: consistency between two dropout passes; simple, broadly effective.'
+  note_status: pending
+  pdf_status: missing
+- key: jain-2023
+  title: 'NEFTune: Noisy Embeddings Improve Instruction Finetuning'
+  authors:
+  - Neel Jain
+  - Ping-yeh Chiang
+  - Yuxin Wen
+  - John Kirchenbauer
+  - Chu, Hong-Min
+  - Gowthami Somepalli
+  - Brian R. Bartoldson
+  - Bhavya Kailkhura
+  - Avi Schwarzschild
+  - Saha, Aniruddha
+  - Micah Goldblum
+  - Jonas Geiping
+  - Tom Goldstein
+  year: 2023
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.2310.05914
+    openalex: W4387560543
+  relevance: to_classify
+  priority: to_review
+  rationale: 'NEFTune: uniform noise on embeddings during LLM instruction tuning (generative setting).'
+  note_status: pending
+  pdf_status: missing
+- key: devries-2017
+  title: Dataset Augmentation in Feature Space
+  authors:
+  - Terrance DeVries
+  - Graham W. Taylor
+  year: 2017
+  publication_type: preprint
+  venue: arXiv (Cornell University)
+  identifiers:
+    doi: 10.48550/arxiv.1702.05538
+    openalex: W2594477595
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Feature-space augmentation (noise/interpolation/extrapolation) as domain-agnostic data augmentation.'
+  note_status: pending
+  pdf_status: missing
+- key: kumar-2019
+  title: A Closer Look At Feature Space Data Augmentation For Few-Shot Intent Classification
+  authors:
+  - Varun Kumar
+  - Hadrien Glaude
+  - Cyprien de Lichy
+  - William M. Campbell
+  year: 2019
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/d19-6101
+    openalex: W2979308242
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Six feature-space augmentation methods on BERT features for few-shot intent classification.'
+  note_status: pending
+  pdf_status: missing
+- key: chen-2023-2
+  title: An Empirical Survey of Data Augmentation for Limited Data Learning in NLP
+  authors:
+  - Jiaao Chen
+  - Derek Tam
+  - Colin Raffel
+  - Mohit Bansal
+  - Diyi Yang
+  year: 2023
+  publication_type: article
+  venue: Transactions of the Association for Computational Linguistics
+  identifiers:
+    doi: 10.1162/tacl_a_00542
+    openalex: W4327656064
+  relevance: to_classify
+  priority: to_review
+  rationale: 'TACL empirical survey at 10 labels/class with BERT: no single winner, augmentation can hurt; Cutoff best on single-sentence supervised; wide CIs. Main text read.'
+  note_status: pending
+  pdf_status: missing
+- key: feng-2021
+  title: A Survey of Data Augmentation Approaches for NLP
+  authors:
+  - Steven Y. Feng
+  - Varun Gangal
+  - Jason Wei
+  - Sarath Chandar
+  - Soroush Vosoughi
+  - Teruko Mitamura
+  - Eduard H. Hovy
+  year: 2021
+  publication_type: conference-paper
+  venue: ''
+  identifiers:
+    doi: 10.18653/v1/2021.findings-acl.84
+    openalex: W3162734203
+  relevance: to_classify
+  priority: to_review
+  rationale: 'Standard survey/taxonomy of NLP data augmentation.'
   note_status: pending
   pdf_status: missing
