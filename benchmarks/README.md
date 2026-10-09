@@ -83,3 +83,46 @@ uv run --extra llama python -m benchmarks.pn2t.counterfactual_pilot \
 
 Like the t2pn benchmark, this is not run in CI. Results go to
 `benchmarks/results/`, which is git-ignored.
+
+## pn2t: downstream augmentation benchmark
+
+`benchmarks/pn2t/downstream.py` asks pn2t's central question: does adding
+generated positives help a classifier? The design is in
+`research/ideas/downstream-augmentation-benchmark.md`.
+
+**Training set.** A low-resource, imbalanced training set (default 25 positive /
+125 negative CAD *training* reviews of at most 1000 characters) gets the same
+number of extra positives under each condition:
+
+| condition | what is added |
+|---|---|
+| `original` | nothing (lower reference) |
+| `duplicate` | positives re-sampled with replacement (same-size control) |
+| `eda` | EDA sentences (`benchmarks/eda.py`, alpha = 0.05; needs WordNet via `nltk`) |
+| `hard_positive` | `pn2t.HardPositiveOverSampler` output |
+| `counterfactual` | `pn2t.CounterfactualOverSampler` output (default `verify`) |
+| `human_cad` | crowd workers' positive revisions of the training negatives (upper reference) |
+
+**Two steps.** Generation and evaluation are separate, so the slow local-LLM
+generation can be reused by evaluations on other machines (e.g. fine-tuning on a
+GPU server):
+
+```
+uv run --extra llama --group benchmark python -m benchmarks.pn2t.downstream \
+    --output aug.json generate --editor-model /path/to/model.gguf
+uv run --group benchmark python -m benchmarks.pn2t.downstream \
+    evaluate --augmentations aug.json                     # TF-IDF + logistic regression
+uv run --group benchmark --extra finetuning python -m benchmarks.pn2t.downstream \
+    evaluate --augmentations aug.json --classifier finetuning --model-name bert-base-uncased
+```
+
+**Equal sizes.** Conditions are truncated to the smallest non-empty count, so all
+augmented training sets are the same size. A condition that produced nothing is
+skipped and reported.
+
+**Metrics.** Accuracy, macro-F1 and ROC-AUC with bootstrap 95% CIs, plus the share
+of test items predicted positive, on the original CAD test reviews and on their
+counterfactual revisions. Low-resource TF-IDF models often predict almost only one
+class, so read AUC (threshold-free) alongside accuracy. Results go to
+`benchmarks/results/` (git-ignored).
+

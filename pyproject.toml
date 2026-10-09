@@ -103,4 +103,5 @@ dev = [
 ]
 benchmark = [
     "datasets",
+    "nltk>=3.10.3",
 ]
