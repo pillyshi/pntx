@@ -267,6 +267,33 @@ def test_auto_strategy_balances_classes() -> None:
     assert y_aug.count(1) == y_aug.count(0) == 3
 
 
+def test_pivots_dropped_to_fit_the_prompt_keep_pivot_ids_aligned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Long negatives + every pivot admitted by sampling -> the final fit must
+    # drop pivots. pivot_ids in the response must still map to the pivots that
+    # were actually in the prompt, and dropped pivots must stay untried.
+    from pntx.pn2t._base import PROMPT_MARGIN
+    from pntx.pn2t._structured import render_prompt
+    from pntx.selection import default_tokenizer
+
+    neg = [f"{w} " * 60 + "boring" for w in ("alpha", "beta", "gamma", "delta")]
+    X, y = ["great fun"] + neg, [1, 0, 0, 0, 0]
+    edit: EditFn = lambda pivot: (pivot.replace("boring", "gripping"), True)  # noqa: E731
+    backend = EditingBackend(edit)
+    sampler = _sampler(backend, sampling_strategy={1: 2}, batch_size=4, max_tokens=90)
+    fixed = default_tokenizer(render_prompt(*sampler._render_messages([[], []], 4)))
+    sampler.set_params(context_limit=fixed + 90 + PROMPT_MARGIN + 200)
+    monkeypatch.setattr(CounterfactualOverSampler, "_exemplar_budget", lambda self, a: 10**6)
+    sampler.fit_resample(X, y)
+
+    [seen] = backend.pivots_seen[:1]
+    assert 1 <= len(seen) < 4  # some pivots were dropped to fit
+    for e in sampler.generation_result_.edits:
+        assert e.source_text in seen
+        assert e.text == e.source_text.replace("boring", "gripping")
+
+
 # ---- verify="none"/"self" -----------------------------------------------------
 
 

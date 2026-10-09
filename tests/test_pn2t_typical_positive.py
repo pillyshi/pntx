@@ -9,6 +9,9 @@ import pytest
 from sklearn.base import clone
 
 from pntx.pn2t import TypicalPositiveOverSampler
+from pntx.pn2t._base import PROMPT_MARGIN
+from pntx.pn2t._structured import render_prompt
+from pntx.selection import default_tokenizer
 
 from .conftest import SAMPLE_NEGATIVE, SAMPLE_POSITIVE, FakeBackend
 
@@ -264,18 +267,15 @@ def test_context_limit_too_small_for_max_tokens_raises() -> None:
 
 
 def test_no_positive_example_fits_budget_raises() -> None:
-    # context_limit=600, max_tokens=90 -> budget = 600-500-90 = 10 tokens
-    # (no halving, unlike HardPositiveOverSampler, since only the positive side is
-    # sampled). The default tokenizer is len(text)//4 + 1, so a 50-char
-    # positive text costs 13 tokens and can never fit.
+    # Budget of 10 tokens (no halving: only the positive side is sampled). The
+    # default tokenizer is len(text)//4 + 1, so a 50-char positive costs 13.
     X = ["x" * 50, "ok"]
     y = [1, 0]
     sampler = TypicalPositiveOverSampler(
-        backend=FakeBackend(),
-        sampling_strategy=_generate(1, n_pos=1),
-        context_limit=600,
-        max_tokens=90,
+        backend=FakeBackend(), sampling_strategy=_generate(1, n_pos=1), max_tokens=90
     )
+    fixed = default_tokenizer(render_prompt(*sampler._render_messages([[]], sampler.batch_size)))
+    sampler.set_params(context_limit=fixed + 90 + PROMPT_MARGIN + 10)
     with pytest.raises(ValueError, match="no positive example fits"):
         sampler.fit_resample(X, y)
 

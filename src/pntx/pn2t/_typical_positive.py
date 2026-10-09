@@ -11,7 +11,6 @@ from .. import dedup
 from ..backends.base import Backend
 from . import prompts
 from ._base import (
-    PROMPT_OVERHEAD,
     BaseLLMOverSampler,
     SamplingStrategy,
     _Logger,
@@ -75,14 +74,13 @@ class TypicalPositiveOverSampler(
     LLM-generated candidates, or DP fine-tuning of the generator (Yue et al.
     2023). Use one of those when a formal guarantee is required.
 
-    ``context_limit`` is the token budget for the *whole* per-batch prompt
-    (exemplars + fixed overhead), and ``max_tokens`` is reserved out of it
-    for the generation response. Unlike ``HardPositiveOverSampler`` (which
-    splits its budget between positive and negative exemplars), this class
-    only samples the positive side, so the entire remainder goes to positive
-    exemplars: ``budget = context_limit - overhead - max_tokens`` (no
-    halving) -- a ``context_limit`` tuned for ``HardPositiveOverSampler``
-    will admit more exemplars per batch here.
+    ``context_limit`` and ``max_tokens`` work as in
+    ``HardPositiveOverSampler`` (capped by the backend's ``context_window``,
+    fixed prompt measured, final prompt checked and fitted by dropping
+    exemplars). Unlike ``HardPositiveOverSampler``, which splits its budget
+    between positive and negative exemplars, this class only samples the
+    positive side, so the whole remainder goes to positive exemplars (no
+    halving).
 
     ``sample_method`` picks how positive exemplars are chosen from the pool
     within that token budget: ``"random"`` (default) is a uniform random
@@ -116,6 +114,7 @@ class TypicalPositiveOverSampler(
             print("  generalized:", st.generalized_from)
     """
 
+    _n_prompt_sides = 1
     _result_model = SyntheticGenerationResult
     _batch_model = SyntheticGenerationResult
     _progress_desc = "Generating typical positives"
@@ -187,8 +186,18 @@ class TypicalPositiveOverSampler(
         if self.min_verbatim_span < 1:
             raise ValueError(f"min_verbatim_span must be >= 1, got {self.min_verbatim_span}")
 
-    def _exemplar_budget(self) -> int:
-        return self.context_limit - PROMPT_OVERHEAD - self.max_tokens
+    def _exemplar_budget(self, available: int) -> int:
+        return available
+
+    def _render_messages(self, sides: list[list[str]], batch_count: int) -> tuple[str, str]:
+        (pos_texts,) = sides
+        system = prompts.build_synthetic_system_message()
+        user = prompts.build_synthetic_user_message(
+            pos_texts=pos_texts,
+            n_synthesized=batch_count,
+            language=self.language,
+        )
+        return system, user
 
     def _check_exemplars_fit(
         self,
@@ -225,13 +234,8 @@ class TypicalPositiveOverSampler(
         pos_sampled = self._sample_prompt_examples(
             pos_texts, budget, tokenizer_fn, rng, self.max_examples
         )
-        system = prompts.build_synthetic_system_message()
-        user = prompts.build_synthetic_user_message(
-            pos_texts=pos_sampled,
-            n_synthesized=batch_count,
-            language=self.language,
-        )
-        return system, user
+        messages, _ = self._fit_prompt([pos_sampled], [1], batch_count, tokenizer_fn)
+        return messages
 
     def _merge_batch_analysis(self, result: SyntheticGenerationResult) -> None:
         self.generation_result_.style_features.extend(result.style_features)

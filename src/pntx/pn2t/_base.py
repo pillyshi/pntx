@@ -19,14 +19,17 @@ from .._labels import resolve_binary_labels
 from .._sklearn import LLMEstimatorMixin
 from ..backends.base import Backend
 from ..selection import _SAMPLE_METHODS, default_tokenizer, sample_group
-from ._structured import complete_structured
+from ._structured import complete_structured, render_prompt
 
 if TYPE_CHECKING:
     from typing_extensions import Self
 
 __all__ = ["BaseLLMOverSampler", "SamplingStrategy"]
 
-PROMPT_OVERHEAD = 500
+# Tokens kept free beyond ``max_tokens`` when fitting a prompt: room for the
+# backend's chat-template markers (``LlamaCppBackend`` reserves 64) plus slack
+# for tokenization differences when the prompt is rendered as one string.
+PROMPT_MARGIN = 96
 
 SamplingStrategy: TypeAlias = (
     str | float | Mapping[Any, int] | Callable[[list[Any]], Mapping[Any, int]]
@@ -223,6 +226,7 @@ class BaseLLMOverSampler(
     """
 
     # Set by subclasses.
+    _n_prompt_sides: ClassVar[int]
     _result_model: ClassVar[type[BaseModel]]
     _batch_model: ClassVar[type[BaseModel]]
     _progress_desc: ClassVar[str]
@@ -265,8 +269,16 @@ class BaseLLMOverSampler(
         when nothing is to be generated, so data-dependent validation always
         runs)."""
 
-    def _exemplar_budget(self) -> int:
-        """Token budget for one side's exemplars in a single prompt."""
+    def _exemplar_budget(self, available: int) -> int:
+        """Token budget for one side's exemplars, given the ``available``
+        tokens left after the measured fixed prompt, ``max_tokens`` and
+        ``PROMPT_MARGIN``."""
+        raise NotImplementedError
+
+    def _render_messages(self, sides: list[list[str]], batch_count: int) -> tuple[str, str]:
+        """``(system, user)`` for one batch built from ``sides`` (one exemplar
+        list per prompt side, ``_n_prompt_sides`` of them). With empty sides it
+        renders the fixed part of the prompt, which is measured for budgeting."""
         raise NotImplementedError
 
     def _check_exemplars_fit(
@@ -377,10 +389,26 @@ class BaseLLMOverSampler(
         if target_count == 0:
             return list(X), y_list
 
-        budget = self._exemplar_budget()
         tokenizer_fn: Callable[[str], int] = getattr(
             self.backend_, "count_tokens", default_tokenizer
         )
+        self.context_limit_ = self._effective_context_limit()
+        overhead = tokenizer_fn(
+            render_prompt(
+                *self._render_messages([[] for _ in range(self._n_prompt_sides)], self.batch_size)
+            )
+        )
+        budget = self._exemplar_budget(
+            self.context_limit_ - self.max_tokens - PROMPT_MARGIN - overhead
+        )
+        if budget < 1:
+            raise ValueError(
+                f"the context window ({self.context_limit_} tokens) leaves no room for "
+                f"exemplars: the fixed prompt (instructions and JSON schema) takes "
+                f"{overhead} tokens, max_tokens reserves {self.max_tokens} and the margin "
+                f"{PROMPT_MARGIN}. Raise the backend's context size (e.g. n_ctx) and "
+                "context_limit, or lower max_tokens."
+            )
         self._check_exemplars_fit(pos_texts, neg_texts, budget, tokenizer_fn)
 
         rng = make_rng(self.random_state)
@@ -515,13 +543,58 @@ class BaseLLMOverSampler(
                 f"sample_method must be one of {_SAMPLE_METHODS}, got {self.sample_method!r}"
             )
         self._validate_extra_params()
-        if self._exemplar_budget() < 1:
+        if self.context_limit - self.max_tokens - PROMPT_MARGIN < 1:
             raise ValueError(
                 f"context_limit ({self.context_limit}) leaves no token budget for exemplars "
-                f"after reserving overhead ({PROMPT_OVERHEAD}) and max_tokens "
-                f"({self.max_tokens}) for the generation response; lower max_tokens or "
-                "raise context_limit"
+                f"after reserving max_tokens ({self.max_tokens}) for the generation "
+                f"response and a margin ({PROMPT_MARGIN}); lower max_tokens or raise "
+                "context_limit"
             )
+
+    def _effective_context_limit(self) -> int:
+        """``context_limit`` capped by the backend's actual context window when
+        the backend reports one (``LlamaCppBackend.context_window``), so a
+        default ``context_limit`` far above the real window can't make a
+        prompt overflow."""
+        window = getattr(self.backend_, "context_window", None)
+        if isinstance(window, Integral) and not isinstance(window, bool):
+            return min(self.context_limit, int(window))
+        return self.context_limit
+
+    def _prompt_fits(self, system: str, user: str, tokenizer_fn: Callable[[str], int]) -> bool:
+        used = tokenizer_fn(render_prompt(system, user))
+        return used + self.max_tokens + PROMPT_MARGIN <= self.context_limit_
+
+    def _fit_prompt(
+        self,
+        sides: list[list[str]],
+        min_sizes: list[int],
+        batch_count: int,
+        tokenizer_fn: Callable[[str], int],
+    ) -> tuple[tuple[str, str], list[list[str]]]:
+        """Render the prompt, dropping exemplars until the *measured* prompt
+        fits the context window -- the instructions and schema are never cut.
+
+        Each step removes the last exemplar of the side with the most items
+        (never below its ``min_sizes`` entry), which keeps sides balanced.
+        Budgeted sampling usually fits already; this catches what per-text
+        token counts miss (list numbering, separators). Raises ``ValueError``
+        if even the minimum exemplars don't fit.
+        """
+        sides = [list(side) for side in sides]
+        while True:
+            messages = self._render_messages(sides, batch_count)
+            if self._prompt_fits(*messages, tokenizer_fn):
+                return messages, sides
+            shrinkable = [i for i, side in enumerate(sides) if len(side) > min_sizes[i]]
+            if not shrinkable:
+                raise ValueError(
+                    f"the prompt does not fit the context window ({self.context_limit_} "
+                    f"tokens) even with the minimum number of exemplars; raise the "
+                    "backend's context size and context_limit, lower max_tokens, or use "
+                    "shorter texts"
+                )
+            sides[max(shrinkable, key=lambda i: len(sides[i]))].pop()
 
     def _sample_prompt_examples(
         self,

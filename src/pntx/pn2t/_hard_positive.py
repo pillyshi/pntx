@@ -9,7 +9,6 @@ import numpy as np
 from ..backends.base import Backend
 from . import prompts
 from ._base import (
-    PROMPT_OVERHEAD,
     BaseLLMOverSampler,
     SamplingStrategy,
     _Logger,
@@ -69,12 +68,15 @@ class HardPositiveOverSampler(
     resampling; a callable ``f(y) -> dict`` is interpreted the same way.
 
     ``context_limit`` is the token budget for the *whole* per-batch prompt
-    (exemplars + fixed overhead), and ``max_tokens`` is reserved out of it
-    for the generation response -- pass a backend's actual context window
-    (e.g. ``LlamaCppBackend``'s ``n_ctx``) as ``context_limit`` rather than
-    subtracting an output reservation yourself; ``max_tokens`` already
-    accounts for that split (exemplar budget = ``(context_limit -
-    overhead - max_tokens) / 2``, per class).
+    plus the response; ``max_tokens`` is reserved out of it for the
+    response. It is automatically capped by the backend's ``context_window``
+    when the backend reports one (``LlamaCppBackend`` does), so the default
+    can stay large. The fixed part of the prompt (instructions and JSON
+    schema) is *measured* with the backend's tokenizer, and the per-class
+    exemplar budget is ``(limit - fixed - max_tokens - margin) / 2``. Every
+    rendered prompt is then checked against the limit and, if needed,
+    exemplars are dropped (keeping both classes) -- the instructions are
+    never truncated.
 
     ``sample_method`` picks how exemplars are chosen from each side's pool
     within that per-class token budget: ``"random"`` (default) is a uniform
@@ -110,6 +112,7 @@ class HardPositiveOverSampler(
             print("  evidence:", hp.positive_evidence)
     """
 
+    _n_prompt_sides = 2
     _result_model = HardPositiveGenerationResult
     _batch_model = HardPositiveGenerationResult
     _progress_desc = "Generating hard positives"
@@ -164,8 +167,19 @@ class HardPositiveOverSampler(
                 f"max_examples_per_class must be >= 1 or None, got {self.max_examples_per_class}"
             )
 
-    def _exemplar_budget(self) -> int:
-        return (self.context_limit - PROMPT_OVERHEAD - self.max_tokens) // 2
+    def _exemplar_budget(self, available: int) -> int:
+        return available // 2
+
+    def _render_messages(self, sides: list[list[str]], batch_count: int) -> tuple[str, str]:
+        pos_texts, neg_texts = sides
+        system = prompts.build_system_message()
+        user = prompts.build_user_message(
+            pos_texts=pos_texts,
+            neg_texts=neg_texts,
+            n_synthesized=batch_count,
+            language=self.language,
+        )
+        return system, user
 
     def _check_exemplars_fit(
         self,
@@ -214,14 +228,10 @@ class HardPositiveOverSampler(
         if len(neg_sampled) > n_balanced:
             neg_sampled = rng.sample(neg_sampled, n_balanced)
 
-        system = prompts.build_system_message()
-        user = prompts.build_user_message(
-            pos_texts=pos_sampled,
-            neg_texts=neg_sampled,
-            n_synthesized=batch_count,
-            language=self.language,
+        messages, _ = self._fit_prompt(
+            [pos_sampled, neg_sampled], [1, 1], batch_count, tokenizer_fn
         )
-        return system, user
+        return messages
 
     def _merge_batch_analysis(self, result: HardPositiveGenerationResult) -> None:
         self.generation_result_.positive_features.extend(result.positive_features)

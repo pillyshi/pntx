@@ -13,7 +13,6 @@ from .. import dedup
 from ..backends.base import Backend
 from . import prompts
 from ._base import (
-    PROMPT_OVERHEAD,
     BaseLLMOverSampler,
     SamplingStrategy,
     _Logger,
@@ -124,7 +123,8 @@ class CounterfactualOverSampler(
     token budget) and only reused once every negative has been tried.
 
     ``context_limit``/``max_tokens`` work as in ``HardPositiveOverSampler``:
-    the exemplar budget ``(context_limit - overhead - max_tokens) / 2`` is
+    the exemplar budget ``(limit - measured fixed prompt - max_tokens -
+    margin) / 2`` is
     used once for the pivots and once for the positive references.
 
     Fitted attributes:
@@ -156,6 +156,7 @@ class CounterfactualOverSampler(
             print(edit.source_text, "->", edit.text)
     """
 
+    _n_prompt_sides = 2
     _result_model = CounterfactualGenerationResult
     _batch_model = CounterfactualBatch
     _progress_desc = "Generating counterfactual edits"
@@ -285,8 +286,14 @@ class CounterfactualOverSampler(
                 fold_of[int(i)] = fold
         self._fold_of = fold_of
 
-    def _exemplar_budget(self) -> int:
-        return (self.context_limit - PROMPT_OVERHEAD - self.max_tokens) // 2
+    def _exemplar_budget(self, available: int) -> int:
+        return available // 2
+
+    def _render_messages(self, sides: list[list[str]], batch_count: int) -> tuple[str, str]:
+        references, pivot_texts = sides
+        system = prompts.build_counterfactual_system_message()
+        user = prompts.build_counterfactual_user_message(pos_texts=references, pivots=pivot_texts)
+        return system, user
 
     def _check_exemplars_fit(
         self,
@@ -347,16 +354,17 @@ class CounterfactualOverSampler(
         tokenizer_fn: Callable[[str], int],
         rng: random.Random,
     ) -> tuple[str, str]:
-        self._batch_pivots = self._choose_pivots(batch_count, budget, tokenizer_fn, rng)
+        chosen = self._choose_pivots(batch_count, budget, tokenizer_fn, rng)
         references = self._sample_prompt_examples(
             pos_texts, budget, tokenizer_fn, rng, self.max_examples
         )
-        system = prompts.build_counterfactual_system_message()
-        user = prompts.build_counterfactual_user_message(
-            pos_texts=references,
-            pivots=[self._X[i] for i in self._batch_pivots],
+        messages, (_, kept_pivots) = self._fit_prompt(
+            [references, [self._X[i] for i in chosen]], [1, 1], batch_count, tokenizer_fn
         )
-        return system, user
+        # Pivots dropped to make the prompt fit go back to the untried pool.
+        self._batch_pivots = chosen[: len(kept_pivots)]
+        self._unused_pivots.extend(chosen[len(kept_pivots) :])
+        return messages
 
     # ---- candidates ---------------------------------------------------------
 

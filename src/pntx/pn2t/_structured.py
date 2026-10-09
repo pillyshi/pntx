@@ -39,7 +39,7 @@ def complete_structured(
     letting the caller's own retry loop (a fresh batch, different exemplars)
     take over.
     """
-    prompt = f"{system}\n\n{user}\n\nJSON:\n"
+    prompt = render_prompt(system, user)
     last_error: Exception | None = None
     for _attempt in range(_MAX_ATTEMPTS):
         if isinstance(backend, StructuredBackend):
@@ -58,6 +58,12 @@ def complete_structured(
             continue
     assert last_error is not None
     raise last_error
+
+
+def render_prompt(system: str, user: str) -> str:
+    """The exact single prompt ``complete_structured`` sends, so callers can
+    measure it (token budgeting) without duplicating the format."""
+    return f"{system}\n\n{user}\n\nJSON:\n"
 
 
 def _extract_json(raw: str) -> str:

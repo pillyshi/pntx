@@ -254,6 +254,13 @@ class LlamaCppBackend:
         self._llm.n_tokens = base
         return results
 
+    @property
+    def context_window(self) -> int:
+        """The model's context size (``n_ctx``) in tokens. pn2t samplers cap
+        their ``context_limit`` by this, so their prompts never rely on the
+        front-trimming fallback below."""
+        return int(self._llm.n_ctx())
+
     def count_tokens(self, text: str) -> int:
         """Return how many tokens ``text`` tokenizes to (no BOS).
 
@@ -289,9 +296,11 @@ class LlamaCppBackend:
         warnings.warn(
             f"prompt ({len(tokens)} tokens) exceeds the available context budget "
             f"({budget} of {n_ctx} tokens, after reserving {reserve} for the "
-            "response); dropping the oldest exemplars to fit. Pass "
-            "t2pn.LLMPromptingClassifier(max_exemplars=...) to select fewer exemplars deliberately "
-            "instead of relying on this truncation.",
+            "response); dropping tokens from the front of the prompt to fit. That sheds "
+            "the oldest exemplars for exemplar-first prompts (t2pn), but would cut the "
+            "instructions of an instruction-first prompt. Keep prompts within the window "
+            "instead, e.g. t2pn.LLMPromptingClassifier(max_exemplars=...); pn2t samplers "
+            "fit their prompts to the window themselves.",
             UserWarning,
             stacklevel=3,
         )
@@ -329,10 +338,12 @@ class LlamaCppBackend:
         warnings.warn(
             f"prompt ({len(tokens)} tokens) exceeds the available context budget "
             f"({budget} of {n_ctx} tokens, after reserving {reserve} for the response "
-            f"and {_CHAT_TEMPLATE_OVERHEAD} for the chat template); dropping the oldest "
-            "exemplars to fit. Pass "
-            "t2pn.LLMPromptingClassifier(max_exemplars=...) to select fewer "
-            "exemplars deliberately instead of relying on this truncation.",
+            f"and {_CHAT_TEMPLATE_OVERHEAD} for the chat template); dropping tokens from "
+            "the front of the prompt to fit. That sheds the oldest exemplars for "
+            "exemplar-first prompts (t2pn), but would cut the instructions of an "
+            "instruction-first prompt. Keep prompts within the window instead, e.g. "
+            "t2pn.LLMPromptingClassifier(max_exemplars=...); pn2t samplers fit their "
+            "prompts to the window themselves.",
             UserWarning,
             stacklevel=3,
         )

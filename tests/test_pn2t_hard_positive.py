@@ -9,8 +9,20 @@ import pytest
 from sklearn.base import clone
 
 from pntx.pn2t import HardPositiveOverSampler
+from pntx.pn2t._base import PROMPT_MARGIN
+from pntx.pn2t._structured import render_prompt
+from pntx.selection import default_tokenizer
 
 from .conftest import SAMPLE_NEGATIVE, SAMPLE_POSITIVE, FakeBackend
+
+
+def _context_for(sampler: HardPositiveOverSampler, per_side_budget: int) -> int:
+    """context_limit giving exactly ``per_side_budget`` tokens per side, from
+    the *measured* fixed prompt (FakeBackend -> default tokenizer)."""
+    fixed = default_tokenizer(
+        render_prompt(*sampler._render_messages([[], []], sampler.batch_size))
+    )
+    return fixed + sampler.max_tokens + PROMPT_MARGIN + 2 * per_side_budget
 
 
 def _canned(hard_positives: list[dict[str, object]]) -> str:
@@ -188,18 +200,15 @@ def test_context_limit_too_small_for_max_tokens_raises() -> None:
 
 
 def test_no_positive_example_fits_budget_raises() -> None:
-    # context_limit=600, max_tokens=90 -> per-class budget = (600-500-90)//2 = 5
-    # tokens. The default tokenizer is len(text)//4 + 1, so a 50-char
-    # positive text costs 13 tokens and can never fit -- this must be caught
-    # up front instead of silently sending "(none)" as the positive exemplars.
+    # Per-side budget of 5 tokens; the default tokenizer is len(text)//4 + 1,
+    # so a 50-char positive costs 13 tokens and can never fit -- caught up
+    # front instead of silently sending "(none)" as the positive exemplars.
     X = ["x" * 50, "ok"]
     y = [1, 0]
     sampler = HardPositiveOverSampler(
-        backend=FakeBackend(),
-        sampling_strategy=_generate(1, n_pos=1),
-        context_limit=600,
-        max_tokens=90,
+        backend=FakeBackend(), sampling_strategy=_generate(1, n_pos=1), max_tokens=90
     )
+    sampler.set_params(context_limit=_context_for(sampler, 5))
     with pytest.raises(ValueError, match="no positive example fits"):
         sampler.fit_resample(X, y)
 
@@ -208,13 +217,19 @@ def test_no_negative_example_fits_budget_raises() -> None:
     X = ["ok", "y" * 50]
     y = [1, 0]
     sampler = HardPositiveOverSampler(
-        backend=FakeBackend(),
-        sampling_strategy=_generate(1, n_pos=1),
-        context_limit=600,
-        max_tokens=90,
+        backend=FakeBackend(), sampling_strategy=_generate(1, n_pos=1), max_tokens=90
     )
+    sampler.set_params(context_limit=_context_for(sampler, 5))
     with pytest.raises(ValueError, match="no negative example fits"):
         sampler.fit_resample(X, y)
+
+
+def test_fixed_prompt_larger_than_context_raises_with_measured_size() -> None:
+    sampler = HardPositiveOverSampler(
+        backend=FakeBackend(), sampling_strategy=_generate(1), max_tokens=90, context_limit=400
+    )
+    with pytest.raises(ValueError, match="fixed prompt"):
+        sampler.fit_resample(*_pools())
 
 
 def test_exemplar_sampling_balances_positive_and_negative_counts(
@@ -240,8 +255,8 @@ def test_exemplar_sampling_balances_positive_and_negative_counts(
 
     monkeypatch.setattr(prompts_mod, "build_user_message", _capturing_build_user_message)
 
-    # context_limit=624, max_tokens=100 -> per-class budget = (624-500-100)//2 = 12.
-    # 5 one-token positives all fit (5 <= 12); 5 five-token negatives only
+    # Per-class budget of 12 tokens (measured fixed prompt + max_tokens + margin
+    # + 2*12). 5 one-token positives all fit (5 <= 12); 5 five-token negatives only
     # let 2 fit (10 <= 12, a 3rd would be 15 > 12) -- an unbalanced 5-vs-2
     # split unless the post-sampling balancing step trims the positive side
     # down to match.
@@ -255,14 +270,68 @@ def test_exemplar_sampling_balances_positive_and_negative_counts(
         backend=backend,
         sampling_strategy=_generate(1, n_pos=len(pos_texts)),
         batch_size=1,
-        context_limit=624,
         max_tokens=100,
     )
+    sampler.set_params(context_limit=_context_for(sampler, 12))
     sampler.fit_resample(X, y)
 
     assert captured["pos"]
     assert captured["neg"]
     assert len(captured["pos"]) == len(captured["neg"]) == 2
+
+
+def test_overflowing_prompt_drops_exemplars_but_keeps_instructions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: LlamaCppBackend trims overflowing prompts from the FRONT,
+    # which for pn2t's instruction-first prompts cut the role/rules/schema.
+    # The sampler must make the prompt fit itself by dropping exemplars.
+    pos = [f"positive example number {i} " * 3 for i in range(8)]
+    neg = [f"negative example number {i} " * 3 for i in range(8)]
+    X, y = pos + neg, [1] * 8 + [0] * 8
+    backend = FakeBackend(complete_responses=[_canned([_hp("gen 1")])])
+    sampler = HardPositiveOverSampler(
+        backend=backend, sampling_strategy=_generate(1, n_pos=8), batch_size=1, max_tokens=90
+    )
+    limit = _context_for(sampler, 40)
+    sampler.set_params(context_limit=limit)
+    # Make budgeted sampling admit everything, so only the final fit can save us.
+    monkeypatch.setattr(HardPositiveOverSampler, "_exemplar_budget", lambda self, a: 10**6)
+    sampler.fit_resample(X, y)
+
+    [prompt] = backend.complete_calls
+    assert prompt.startswith("You are a data augmentation expert.")
+    assert '"hard_positives"' in prompt  # schema intact
+    assert default_tokenizer(prompt) + 90 + PROMPT_MARGIN <= limit
+    assert sum(p in prompt for p in pos) < 8  # exemplars were dropped instead
+    assert sum(p in prompt for p in pos) >= 1 and sum(n in prompt for n in neg) >= 1
+
+
+def test_prompt_that_cannot_fit_even_minimally_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    X = ["p " * 400, "n " * 400]
+    sampler = HardPositiveOverSampler(
+        backend=FakeBackend(), sampling_strategy=_generate(1, n_pos=1), max_tokens=90
+    )
+    sampler.set_params(context_limit=_context_for(sampler, 30))
+    monkeypatch.setattr(HardPositiveOverSampler, "_exemplar_budget", lambda self, a: 10**6)
+    monkeypatch.setattr(HardPositiveOverSampler, "_check_exemplars_fit", lambda *a: None)
+    with pytest.raises(ValueError, match="does not fit the context window"):
+        sampler.fit_resample(X, [1, 0])
+
+
+class _WindowedBackend(FakeBackend):
+    context_window = 3000
+
+
+def test_context_limit_is_capped_by_backend_context_window() -> None:
+    backend = _WindowedBackend(complete_responses=[_canned([_hp("gen 1")])])
+    sampler = HardPositiveOverSampler(
+        backend=backend, sampling_strategy=_generate(1), batch_size=1, max_tokens=90
+    )  # default context_limit=100_000
+    sampler.fit_resample(*_pools())
+    assert sampler.context_limit_ == 3000
+    [prompt] = backend.complete_calls
+    assert default_tokenizer(prompt) + 90 + PROMPT_MARGIN <= 3000
 
 
 def test_invalid_sample_method_raises() -> None:

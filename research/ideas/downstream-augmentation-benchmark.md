@@ -70,6 +70,34 @@ test items predicted positive.
 `edit_too_large` and 13 as `self_check_failed`). EDA, duplication and human CAD
 are free.
 
+**⚠ The `hard_positive` row above is invalid; it must be regenerated.** When its
+prompts overflowed, `LlamaCppBackend` trimmed them *from the front*. For pn2t's
+instruction-first prompts that removed about 210 tokens of the system prompt: the
+role and the core rules, such as "prioritize texts experts would label Positive but
+shallow classifiers would label Negative". So these hard positives were generated
+largely *without their instructions*.
+
+Fixed after this run. pn2t samplers now:
+
+- measure the fixed prompt;
+- cap `context_limit` by the backend's `context_window`;
+- fit every prompt by dropping exemplars instead of letting the backend cut
+  instructions.
+
+A post-fix check with the same settings showed no truncation. It was also about
+3–4× slower per call (2 calls, 1231 s for 4 texts), presumably because the intact
+instructions elicit the full analysis output. That is unmeasured, and the
+regeneration should record it. The `counterfactual` row very likely stands, by inference
+rather than direct observation (stdout buffering means the log cannot attribute
+warnings):
+
+- The 44 warnings report prompts of 6296–6324 tokens. That matches HardPositive
+  filling *both* per-class budgets (about 2 × 2822 tokens) plus its system prompt.
+- Counterfactual uses at most 2 pivots per batch (about 500 tokens) on one side,
+  so its prompts stay around 4.2k tokens.
+- 44 is close to HardPositive's call count (about 50), not to Counterfactual's
+  (about 84).
+
 **Issues found (library).**
 
 - `HardPositiveOverSampler`'s fixed `PROMPT_OVERHEAD = 500` underestimates its
