@@ -41,8 +41,9 @@ endef
 
 # User-supplied CMD is sent as a script on stdin (or as a script file for
 # tmux) instead of being nested inside bash -c '...', so its quotes are passed
-# through untouched. CMD reaches the recipe shell via the environment.
-export CMD
+# through untouched. CMD reaches the recipe shell via the environment, taken
+# with $(value ...) so make doesn't expand $-references in it ($s, $HOME, ...).
+export RUN_CMD := $(value CMD)
 
 .PHONY: help sync fetch run run-bg ssh attach status install install-llama-cpp setup \
 	test-integration bench-generate bench-eval-ft guard-%
@@ -80,11 +81,11 @@ fetch: guard-HOST
 # --- running --------------------------------------------------------------------
 
 run: sync guard-CMD
-	printf '%s\n' "cd $(REMOTE_DIR)" "$$CMD" | ssh $(HOST) 'bash -l -s'
+	printf '%s\n' "cd $(REMOTE_DIR)" "$$RUN_CMD" | ssh $(HOST) 'bash -l -s'
 	$(MAKE) fetch
 
 run-bg: sync guard-CMD guard-SESSION
-	printf '%s\n' "cd ~/$(REMOTE_DIR)" "$$CMD" | ssh $(HOST) 'cat > ~/$(REMOTE_DIR)/.run-$(SESSION).sh'
+	printf '%s\n' "cd ~/$(REMOTE_DIR)" "$$RUN_CMD" | ssh $(HOST) 'cat > ~/$(REMOTE_DIR)/.run-$(SESSION).sh'
 	$(call remote-exec-tmux,$(SESSION),bash -l .run-$(SESSION).sh)
 	@echo "Started tmux session '$(SESSION)'. Follow with: make attach SESSION=$(SESSION); collect with: make fetch"
 
@@ -96,7 +97,7 @@ attach: guard-HOST guard-SESSION
 
 status: guard-HOST
 	-ssh $(HOST) "tmux ls"
-	ssh $(HOST) "nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv"
+	ssh $(HOST) "bash -l -c 'nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv'"
 
 # --- environment ----------------------------------------------------------------
 

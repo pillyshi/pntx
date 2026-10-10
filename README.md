@@ -161,6 +161,50 @@ Rejected candidates are kept in `generation_result_.rejected` with a reason
 (`"edit_too_large"`, `"self_check_failed"`, `"verifier_rejected"`, ...) so you can see what
 each filter catches.
 
+### Does the augmentation help a classifier?
+
+`benchmarks/pn2t/downstream.py` measures this on Kaushik et al.'s counterfactually-augmented
+IMDb data.
+
+**Setup.** A low-resource, imbalanced training set (25 positive / 125 negative reviews) gets
+100 extra positives under each condition. Every augmented condition is compared with a
+**same-size control** that duplicates existing positives. That control matters: with a
+fixed number of epochs, more examples alone means more training and better class balance.
+
+Evaluation uses two test sets: the original test reviews and their *counterfactual
+revisions*, the same reviews minimally edited by humans to flip the label. Results are over
+3 seeds; the generator was qwen2.5-7B (Q4_K_M) via llama.cpp.
+
+**Results.** AUC gain over the same-size control on the counterfactual test set (seeds that
+beat the control, out of 3):
+
+| condition | TF-IDF + logistic regression | BERT (`FineTuningClassifier`) |
+|---|---|---|
+| EDA (Wei & Zou 2019) | −0.020 (1/3) | −0.165 (0/3) |
+| `HardPositiveOverSampler` | −0.050 (0/3) | +0.021 (2/3) |
+| **`CounterfactualOverSampler`** | **+0.171 (3/3)** | **+0.196 (3/3)** |
+| human-written counterfactuals (reference) | +0.281 (3/3) | +0.208 (3/3) |
+
+**What this shows.**
+
+- **`CounterfactualOverSampler` helped in every seed with both classifiers.** With BERT it
+  recovered about 94% of the gain from human-written counterfactual edits on the
+  counterfactual test set: AUC 0.966 vs 0.978, accuracy 0.889 vs 0.907, with the duplicated
+  control at 0.770 / 0.610. It also matched them on the original test set (AUC 0.921 vs
+  0.919).
+- **Neither EDA nor `HardPositiveOverSampler` reliably beat simply duplicating the existing
+  positives.**
+
+**Caveats.**
+
+- 3 seeds, one domain (English movie reviews), one generator model and one training size.
+- The BERT settings are untuned library defaults (3 epochs, `max_length=128`).
+- The counterfactual test set is built the same way as the human reference.
+
+The full tables, per-seed ranges and caveats are in
+`research/ideas/downstream-augmentation-benchmark.md`, and how to rerun the benchmark is in
+`benchmarks/README.md`.
+
 > **Upgrading from before 0.16.0.** `OverSampler` is now `HardPositiveOverSampler`,
 > `SyntheticSampler` is now `TypicalPositiveOverSampler`, and their `n_synthesized`/`seed`
 > parameters are now `sampling_strategy`/`random_state` (imbalanced-learn's names). The old

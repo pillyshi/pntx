@@ -51,6 +51,12 @@ def wordnet_synonyms(nltk_dir: Path = DEFAULT_NLTK_DIR) -> tuple[SynonymFn, set[
     import nltk
 
     nltk_dir.mkdir(parents=True, exist_ok=True)
+    if nltk_dir == DEFAULT_NLTK_DIR:
+        # NLTK refuses to download into a directory that is (or has an
+        # ancestor that is) group- or world-writable, which a umask of 002
+        # (e.g. Ubuntu/WSL defaults) produces. Keep our own cache dirs private.
+        for directory in (nltk_dir.parent, nltk_dir):
+            directory.chmod(0o700)
     if str(nltk_dir) not in nltk.data.path:
         nltk.data.path.insert(0, str(nltk_dir))
     for package, probe in (("wordnet", "corpora/wordnet"), ("stopwords", "corpora/stopwords")):

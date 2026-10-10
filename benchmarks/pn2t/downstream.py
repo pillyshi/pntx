@@ -216,7 +216,7 @@ def _make_classifier(args: argparse.Namespace) -> Any:
         )
     from pntx.t2pn import FineTuningClassifier
 
-    return FineTuningClassifier(model_name=args.model_name, class_weight="balanced")
+    return FineTuningClassifier(model_name=args.model_name, class_weight="balanced", seed=args.seed)
 
 
 def evaluate(args: argparse.Namespace) -> None:

@@ -8,7 +8,8 @@ dist/
 build/
 .venv/
 
-benchmarks/results/*.json
+benchmarks/results/*
+!benchmarks/results/.gitkeep
 
 # Local GPU-server settings for the Makefile (HOST etc.)
 .env
