@@ -9,3 +9,6 @@ build/
 .venv/
 
 benchmarks/results/*.json
+
+# Local GPU-server settings for the Makefile (HOST etc.)
+.env
