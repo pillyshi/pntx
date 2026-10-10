@@ -194,12 +194,21 @@ beat the control, out of 3):
   0.919).
 - **Neither EDA nor `HardPositiveOverSampler` reliably beat simply duplicating the existing
   positives.**
+- **The gain carries over to other review domains.** The same IMDb-trained models were
+  also tested on balanced out-of-domain samples: 1,000 Yelp and 1,000 Amazon reviews. That
+  addresses the caveat that the counterfactual test set is built like the human reference.
+  - With BERT, `CounterfactualOverSampler` again beat the duplicated control in 3/3 seeds:
+    AUC +0.070 on Yelp and +0.060 on Amazon. Human-written counterfactuals gave +0.074 and
+    +0.068, so it reached AUC 0.946 on both against 0.950 and 0.953.
+  - With TF-IDF it gained +0.125 and +0.082 (3/3), against +0.168 and +0.132 for
+    human-written counterfactuals.
 
 **Caveats.**
 
 - 3 seeds, one domain (English movie reviews), one generator model and one training size.
 - The BERT settings are untuned library defaults (3 epochs, `max_length=128`).
-- The counterfactual test set is built the same way as the human reference.
+- The counterfactual test set is built the same way as the human reference. The
+  out-of-domain results above don't have that bias.
 
 The full tables, per-seed ranges and caveats are in
 `research/ideas/downstream-augmentation-benchmark.md`, and how to rerun the benchmark is in

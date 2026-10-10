@@ -239,6 +239,12 @@ def evaluate(args: argparse.Namespace) -> None:
         "original_test": (test_orig_X, test_orig_y),
         "revised_test": (test_rev_X, test_rev_y),
     }
+    if args.ood:
+        from benchmarks import ood
+
+        for name in args.ood:
+            # Fixed sample seed (not --seed): every run sees the same OOD items.
+            test_sets[f"{name}_test"] = ood.load_ood(name, n=args.n_ood, seed=0)
 
     def macro_f1(t: Sequence[str], p: Sequence[str]) -> float:
         return float(f1_score(t, p, average="macro"))
@@ -268,7 +274,7 @@ def evaluate(args: argparse.Namespace) -> None:
         rows.append(row)
         print(f"  evaluated {condition}")
 
-    table = format_table(rows)
+    table = format_table(rows, test_names=list(test_sets))
     print(table)
     report = {
         "config": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
@@ -286,14 +292,13 @@ def evaluate(args: argparse.Namespace) -> None:
     print(f"Wrote results to {output}")
 
 
-def format_table(rows: list[dict[str, Any]]) -> str:
+def format_table(
+    rows: list[dict[str, Any]],
+    test_names: Sequence[str] = ("original_test", "revised_test"),
+) -> str:
     """Markdown table: point estimate with 95% CI for each test set and metric,
     plus the share of test items predicted positive (``pred_pos``)."""
-    cols = [
-        f"{t}_{m}"
-        for t in ("original_test", "revised_test")
-        for m in ("acc", "f1", "auc", "pred_pos")
-    ]
+    cols = [f"{t}_{m}" for t in test_names for m in ("acc", "f1", "auc", "pred_pos")]
 
     def cell(v: Any) -> str:
         if v is None:
@@ -346,6 +351,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     e.add_argument("--augmentations", required=True, type=Path)
     e.add_argument("--classifier", choices=["tfidf", "finetuning"], default="tfidf")
     e.add_argument("--model-name", default="bert-base-multilingual-cased")
+    e.add_argument(
+        "--ood",
+        nargs="*",
+        default=[],
+        choices=["yelp", "amazon"],
+        help="Also evaluate on balanced out-of-domain test samples (benchmarks/ood.py)",
+    )
+    e.add_argument("--n-ood", type=int, default=1000, help="Items per OOD test set")
     return parser.parse_args(argv)
 
 

@@ -199,6 +199,40 @@ revised AUC columns are on the original and counterfactual CAD tests.
   `FineTuningClassifier` hidden-space augmentation (Cutoff) stacked on
   `counterfactual`.
 
+### Out-of-domain results (2026-10-10)
+
+**Setup.** The same 3 seeds and models were also evaluated with `evaluate --ood yelp
+amazon`: balanced samples of 1,000 reviews each from `fancyzhx/yelp_polarity` and
+`fancyzhx/amazon_polarity`, drawn with a fixed sample seed. The label mapping is
+declared and checked in `benchmarks/ood.py` and was eyeballed on real items. These
+domains share nothing with how human CAD was built, so they test the main caveat
+above. BERT's original and revised AUCs reproduced the previous run exactly
+(max |Δ| = 0.0000), confirming the seeding fix.
+
+Values are the mean AUC over 3 seeds; Δdup is the paired difference from
+`duplicate`, with wins out of 3.
+
+| condition | TF-IDF Yelp Δdup | TF-IDF Amazon Δdup | BERT Yelp AUC (Δdup) | BERT Amazon AUC (Δdup) |
+|---|---|---|---|---|
+| eda | +0.018 (3/3) | +0.007 (3/3) | 0.752 (−0.124, 0/3) | 0.803 (−0.083, 0/3) |
+| hard_positive | +0.054 (3/3) | −0.003 (1/3) | 0.886 (+0.009, 2/3) | 0.897 (+0.012, 2/3) |
+| **counterfactual** | **+0.125 (3/3)** | **+0.082 (3/3)** | **0.946 (+0.070, 3/3)** | **0.946 (+0.060, 3/3)** |
+| human_cad | +0.168 (3/3) | +0.132 (3/3) | 0.950 (+0.074, 3/3) | 0.953 (+0.068, 3/3) |
+| (duplicate) | – | – | 0.876 | 0.886 |
+
+**Reading.**
+
+- **The counterfactual gain is not an artifact of the CAD-style test set.**
+  - With BERT it recovers 95% (Yelp) and 88% (Amazon) of human CAD's gain over
+    `duplicate`. Its Yelp accuracy (0.871) even exceeds human CAD's (0.850).
+    Seed-to-seed spread stays small (AUC 0.942–0.952).
+  - With TF-IDF it recovers 74% and 62%.
+- `hard_positive` shows a TF-IDF gain on Yelp only. With BERT it remains about
+  equal to `duplicate`, with high variance.
+- EDA again hurts BERT.
+- For TF-IDF, `duplicate` is slightly *below* `original` on both OOD sets, so
+  duplication itself costs a little out of domain for the linear model.
+
 ## (superseded) BERT results (2026-10-10; same augmentations, `--classifier finetuning`, home GPU)
 
 **Setup.** Evaluated on the home GPU server (RTX 4060 Ti) with `make

@@ -122,7 +122,10 @@ skipped and reported.
 
 **Metrics.** Accuracy, macro-F1 and ROC-AUC with bootstrap 95% CIs, plus the share
 of test items predicted positive, on the original CAD test reviews and on their
-counterfactual revisions. Low-resource TF-IDF models often predict almost only one
+counterfactual revisions. `evaluate --ood yelp amazon` adds balanced out-of-domain
+samples (`benchmarks/ood.py`: 1,000 items each from `fancyzhx/yelp_polarity` and
+`fancyzhx/amazon_polarity`, drawn with a fixed seed). Loading them needs the Hugging Face
+Hub, so run that step on the GPU server. Low-resource TF-IDF models often predict almost only one
 class, so read AUC (threshold-free) alongside accuracy. Results go to
 `benchmarks/results/` (git-ignored).
 
