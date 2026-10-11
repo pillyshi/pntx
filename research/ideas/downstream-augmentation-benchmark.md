@@ -314,7 +314,8 @@ the seed only.
 - The output was merged into copies of the existing augmentation files
   (`*-typ50.json` for IMDb, `*-typ.json` for WRIME), so every other condition uses the
   same texts as before. The training sample was checked to be identical.
-- All conditions were then re-evaluated.
+- All conditions were then re-evaluated, each with the same classifier seed as before
+  (the generation seed). Every non-typical number reproduced exactly.
 
 **`min_verbatim_span` had to be raised first.**
 
@@ -325,8 +326,8 @@ the seed only.
   20-character span from the positive pool, against 0-3% at 40.
 - On WRIME, no text hit a span even at 10 characters.
 - 0.19.1 raised the default to 50. At 50, all three IMDb seeds reached 100. The
-  20-character run is kept only for reference (`*-typ.json`); its gains point the same
-  way.
+  20-character run (`*-typ.json`) is not reported: it has unequal counts, and its IMDb
+  BERT evaluation used the wrong fine-tuning seed (see below).
 
 **Results.** Values are the mean AUC difference from `duplicate` (wins out of 3),
 taken from the same re-evaluation as the other conditions.
@@ -342,50 +343,54 @@ IMDb CAD, qwen2.5-7B:
 
 | condition | BERT revised | BERT original | BERT Yelp | BERT Amazon |
 |---|---|---|---|---|
-| hard_positive | −0.083 (2/3) | −0.089 (1/3) | −0.047 (2/3) | −0.048 (2/3) |
-| **typical_positive** | **+0.036 (2/3)** | **−0.009 (2/3)** | **+0.021 (2/3)** | **+0.002 (2/3)** |
-| counterfactual | +0.168 (3/3) | +0.033 (3/3) | +0.062 (3/3) | +0.051 (3/3) |
-| human_cad | +0.174 (3/3) | +0.018 (2/3) | +0.056 (3/3) | +0.048 (3/3) |
+| hard_positive | +0.021 (2/3) | +0.000 (1/3) | +0.009 (2/3) | +0.012 (2/3) |
+| **typical_positive** | **+0.093 (3/3)** | **+0.023 (3/3)** | **+0.043 (3/3)** | **+0.030 (3/3)** |
+| counterfactual | +0.196 (3/3) | +0.033 (3/3) | +0.070 (3/3) | +0.060 (3/3) |
+| human_cad | +0.208 (3/3) | +0.031 (3/3) | +0.074 (3/3) | +0.068 (3/3) |
 
 WRIME, Gemma 4 12B:
 
 | condition | TF-IDF AUC | BERT AUC |
 |---|---|---|
 | hard_positive | −0.025 (0/3) | −0.005 (2/3) |
-| **typical_positive** | **+0.007 (3/3)** | **−0.011 (1/3)** |
-| counterfactual | +0.040 (3/3) | +0.028 (3/3) |
+| **typical_positive** | **+0.007 (3/3)** | **−0.025 (1/3)** |
+| counterfactual | +0.040 (3/3) | +0.038 (3/3) |
 
 **Reading.**
 
-- **Typical positives are roughly on par with duplicating the existing positives.**
-  - The only consistent gain is out of domain with TF-IDF (Yelp +0.066, Amazon +0.020,
-    3/3).
-  - In-domain TF-IDF is slightly negative, and the BERT gains are small and 2/3 at
-    best.
-- **They are mostly a little better than hard positives**, which is consistent with
-  typical examples being less harmful than boundary ones. They are nowhere near
-  counterfactual edits.
-- **The ranking of samplers is unchanged:** counterfactual > typical ≳ hard positive.
+- **In English with BERT, typical positives help consistently.**
+  - They beat `duplicate` in 3/3 seeds on all four test sets: +0.093 on the
+    counterfactual test, +0.023 on the original test, +0.043 on Yelp and +0.030 on
+    Amazon.
+  - That is about half of counterfactual's gain, and clearly more than hard positives,
+    which never reached 3/3.
+- **With TF-IDF they help only out of domain** (Yelp +0.066, Amazon +0.020, 3/3).
+  In domain they are slightly negative, as hard positives are.
+- **In Japanese (WRIME) they don't help.** TF-IDF gave +0.007 and BERT −0.025 (1/3).
+  The WRIME HardPositive note may apply here too: generated positives that don't match
+  the style of short social-media posts don't add much.
+- **The ranking is now counterfactual > typical > hard positive** in English. In
+  Japanese only counterfactual helps.
 
-**IMDb BERT evaluation is not reproducible run to run.**
+**Fine-tuning seed sensitivity (found by accident).**
 
-- TF-IDF re-evaluation reproduced every number exactly.
-- BERT re-evaluation of the *same* augmentation files reproduced seed 0 exactly, but
-  not seeds 1 and 2. Revised-test AUC, before → now:
+- A first re-evaluation omitted `evaluate --seed`, so every file was fine-tuned with
+  seed 0 instead of its own seed. Seed 0 then reproduced exactly, but seeds 1 and 2
+  moved a lot. Revised-test AUC with fine-tuning seed = generation seed → seed 0:
 
-  | seed | original | duplicate | hard_positive | counterfactual |
+  | data seed | original | duplicate | hard_positive | counterfactual |
   |---|---|---|---|---|
-  | 0 | 0.623 → 0.623 | 0.789 → 0.789 | 0.791 → 0.791 | 0.967 → 0.967 |
   | 1 | 0.551 → 0.673 | 0.692 → 0.761 | 0.647 → 0.449 | 0.967 → 0.958 |
   | 2 | 0.897 → 0.688 | 0.830 → 0.834 | 0.935 → 0.896 | 0.965 → 0.962 |
 
-- Counterfactual and human_cad stay near 0.96-0.98, so the headline result holds.
-- The small BERT differences do not hold up, however. The earlier "HardPositive +0.021
-  (2/3)" is −0.083 in this run. Comparisons are therefore only made within one
-  evaluation run.
-- On WRIME, BERT `duplicate` moved from 0.877 to 0.884 and counterfactual's gain from
-  +0.038 to +0.028.
-- Cause: under investigation.
+- So on 150-250 training texts, BERT AUC moves by up to 0.2 with the fine-tuning seed
+  alone. Counterfactual and human_cad stay at 0.96-0.98.
+- The evaluation itself is deterministic given the seed: re-running with the right
+  seed reproduced every earlier number exactly.
+- `evaluate --seed` now defaults to the augmentation file's generation seed, so this
+  mistake can't happen silently again.
+- Implication: BERT differences smaller than about 0.1 rest on a single fine-tuning seed
+  per data seed. Several fine-tuning seeds per data seed would make them firmer.
 
 ### Gemma 4 12B generation speed on an 8 GB GPU (2026-10-11)
 

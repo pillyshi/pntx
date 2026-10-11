@@ -90,3 +90,10 @@ def test_format_table() -> None:
     assert table.count(" - ") == 4  # auc/pred_pos absent in this row -> "-"
     row2 = {**row, "original_test_pred_pos": 0.25}
     assert "| 0.25 |" in downstream.format_table([row2])
+
+
+def test_resolve_eval_seed_defaults_to_generation_seed() -> None:
+    assert downstream.resolve_eval_seed(None, 2) == 2
+    assert downstream.resolve_eval_seed(None, None) == 0
+    assert downstream.resolve_eval_seed(5, 2) == 5
+    assert downstream.resolve_eval_seed(1, 1) == 1

@@ -119,6 +119,20 @@ def equalize(
     return {k: v[:n] for k, v in kept.items()}, n, empty
 
 
+def resolve_eval_seed(cli_seed: int | None, generation_seed: int | None) -> int:
+    """Seed for ``evaluate``: the ``--seed`` given, else the augmentation file's
+    generation seed, so that each seed's file is evaluated with its own
+    fine-tuning seed without having to repeat it (else 0)."""
+    if cli_seed is not None:
+        if generation_seed is not None and cli_seed != generation_seed:
+            print(
+                f"note: evaluating with --seed {cli_seed}, but the augmentations were "
+                f"generated with seed {generation_seed}"
+            )
+        return cli_seed
+    return generation_seed if generation_seed is not None else 0
+
+
 def bootstrap_ci(
     y_true: Sequence[str],
     y_pred: Sequence[str],
@@ -151,6 +165,8 @@ def generate(args: argparse.Namespace) -> None:
         TypicalPositiveOverSampler,
     )
 
+    if args.seed is None:
+        args.seed = 0
     rng = random.Random(args.seed)
     neg_pairs: list[cad.CADPair] = []
     if args.dataset == "cad":
@@ -292,6 +308,7 @@ def evaluate(args: argparse.Namespace) -> None:
     from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
     data = json.loads(Path(args.augmentations).read_text())
+    args.seed = resolve_eval_seed(args.seed, data["config"].get("seed"))
     X, y = data["train"]["X"], data["train"]["y"]
     raw = {k: v["texts"] for k, v in data["augmentations"].items()}
     augs, n_added, empty = equalize(raw)
@@ -407,7 +424,13 @@ def format_table(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache-dir", type=Path, default=None, help="CAD download cache")
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="generate: sampling/generation seed (default 0). evaluate: classifier and "
+        "bootstrap seed (default: the seed the augmentations were generated with)",
+    )
     parser.add_argument("--output", type=Path, default=None)
     sub = parser.add_subparsers(dest="command", required=True)
 
