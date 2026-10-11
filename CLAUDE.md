@@ -192,7 +192,7 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 - `fit_resample(X, y)` は `HardPositiveOverSampler` と同じ契約(二値ラベル、両クラス最低1件)を維持するが、**negative 側はラベル検証にのみ使い、生成プロンプトには含めない**(境界フレーミングを避けるため。典型性は複数の positive exemplar の共通性から判断できる)。
 - `sampling_strategy` の既定は `HardPositiveOverSampler` と同じ `"auto"`(クラスバランスまで)。
 - exemplar サンプリングは positive 側のみ(`HardPositiveOverSampler` の pos/neg 予算折半・バランス調整ロジックは不要)。token budget は `context_limit - 実測した固定部 - max_tokens - margin`(`HardPositiveOverSampler` と異なり `// 2` しない)。
-- `deduplicate=True` のとき、完全一致 dedup に加えて `pntx.dedup.contains_verbatim_span(text, sources, min_len)` で、positive プールから `min_verbatim_span`(デフォルト20文字)以上の連続部分文字列をそのままコピーした生成文を reject してリトライする(棄却理由 `"verbatim_copy"`)。目的は exemplar のほぼコピーで学習データの多様性が増えないのを防ぐことであり、漏洩対策・プライバシー保証ではない。
+- `deduplicate=True` のとき、完全一致 dedup に加えて `pntx.dedup.contains_verbatim_span(text, sources, min_len)` で、positive プールから `min_verbatim_span`(デフォルト50文字)以上の連続部分文字列をそのままコピーした生成文を reject してリトライする(棄却理由 `"verbatim_copy"`)。目的は exemplar のほぼコピーで学習データの多様性が増えないのを防ぐことであり、漏洩対策・プライバシー保証ではない。既定値は 0.19.1 で 20 → 50 文字に引き上げた(20 文字は漏洩検出用の値で、英語の長文レビューでは "The chemistry between" のような定番表現だけで棄却され、IMDb ベンチマークで Typical の採択数が 100 件中 54 件まで落ちた。既存生成文での測定では 40 文字で該当 0〜3%)。
 - `generation_result_`(`style_features`/`content_features`/`typical_positives`、各要素は `text` のみの pydantic モデル)を fit 後に公開。`save`/`load` は `BaseLLMOverSampler` の共通実装(`backend` を除外、`load(path, backend=...)` で再注入)。
 - 下流分類ベンチマーク(`benchmarks/pn2t/downstream.py`)の条件 `typical_positive` として評価する。
 

@@ -58,6 +58,10 @@ class TypicalPositiveOverSampler(
     (as in ``HardPositiveOverSampler``) or when it copies a substring of at
     least ``min_verbatim_span`` characters from a positive exemplar -- a
     cheap guard against near-copies that add little to the training data.
+    The default of 50 characters is long enough that stock phrases shared by
+    many texts (e.g. "The chemistry between the leads") don't count as
+    copies; at 20 characters, typical English reviews were rejected for such
+    phrases alone.
 
     This class does not anonymize: generated texts may carry details from
     the exemplars, which are placed in the prompt verbatim. It is not meant
@@ -114,7 +118,7 @@ class TypicalPositiveOverSampler(
         batch_size: int = 3,
         max_examples: int | None = None,
         deduplicate: bool = True,
-        min_verbatim_span: int = 20,
+        min_verbatim_span: int = 50,
         context_limit: int = 100_000,
         max_tokens: int = 1024,
         language: str | None = None,

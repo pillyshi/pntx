@@ -175,10 +175,13 @@ def test_deduplicate_false_accepts_everything() -> None:
 
 
 def test_verbatim_copy_dedup_rejects_and_retries() -> None:
-    pos_long = "田中太郎さんがサポートセンターに感謝のメッセージを送ってくれてとても嬉しかった"
+    pos_long = (
+        "田中太郎さんがサポートセンターに感謝のメッセージを送ってくれてとても嬉しかった。"
+        "担当者の説明は丁寧で分かりやすく、問題もその日のうちに解決しました"
+    )
     X = [pos_long, "ok"]
     y = [1, 0]
-    copying_text = pos_long[:25] + "、本当に助かりました"
+    copying_text = pos_long[:55] + "、本当に助かりました"
     backend = FakeBackend(
         complete_responses=[
             _canned([_st(copying_text)]),
@@ -195,16 +198,34 @@ def test_verbatim_copy_dedup_rejects_and_retries() -> None:
 
 
 def test_deduplicate_false_also_disables_verbatim_copy_check() -> None:
-    pos_long = "田中太郎さんがサポートセンターに感謝のメッセージを送ってくれてとても嬉しかった"
+    pos_long = (
+        "田中太郎さんがサポートセンターに感謝のメッセージを送ってくれてとても嬉しかった。"
+        "担当者の説明は丁寧で分かりやすく、問題もその日のうちに解決しました"
+    )
     X = [pos_long, "ok"]
     y = [1, 0]
-    copying_text = pos_long[:25] + "、本当に助かりました"
+    copying_text = pos_long[:55] + "、本当に助かりました"
     backend = FakeBackend(complete_responses=[_canned([_st(copying_text)])])
     sampler = TypicalPositiveOverSampler(
         backend=backend, sampling_strategy=_generate(1, n_pos=1), batch_size=1, deduplicate=False
     )
     X_aug, _ = sampler.fit_resample(X, y)
     assert X_aug[len(X) :] == [copying_text]
+
+
+def test_default_min_verbatim_span_accepts_shared_stock_phrases() -> None:
+    pos = "The chemistry between the two leads is wonderful, and the score is moving."
+    X = [pos, "bad"]
+    y = [1, 0]
+    # Shares a 36-char stock phrase with the exemplar, but is not a copy of it.
+    text = "The chemistry between the two leads carries this quiet, funny road movie."
+    backend = FakeBackend(complete_responses=[_canned([_st(text)])])
+    sampler = TypicalPositiveOverSampler(
+        backend=backend, sampling_strategy=_generate(1, n_pos=1), batch_size=1
+    )
+    assert sampler.min_verbatim_span == 50
+    X_aug, _ = sampler.fit_resample(X, y)
+    assert X_aug[len(X) :] == [text]
 
 
 def test_min_verbatim_span_is_configurable() -> None:

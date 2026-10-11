@@ -120,7 +120,7 @@ exemplar. Its `sampling_strategy` defaults to `"auto"`, as for `HardPositiveOver
 The negative pool is still required (for the same binary-label validation), but it's
 never shown to the backend: contrasting against negatives would frame generation around
 the boundary rather than the typical case. Besides exact-match dedup, a verbatim-substring
-check (`min_verbatim_span`, default 20 characters) rejects and retries any generated text
+check (`min_verbatim_span`, default 50 characters, long enough that shared stock phrases don't count) rejects and retries any generated text
 that copies a long span straight out of a positive exemplar.
 
 It does **not** anonymize: exemplars go into the prompt verbatim and generated texts can
