@@ -1,5 +1,7 @@
 # pntx
 
+[日本語版 README](https://github.com/pillyshi/pntx/blob/main/README.ja.md)
+
 `pntx` is a Python library that turns user-supplied `positive`/`negative` text pools
 into two independent components:
 
@@ -156,7 +158,8 @@ then label verification:
 extra cost. The classifier verifier was the most precise, but most of what it kept was
 already easy for a shallow classifier. The editor model matters more than the verifier: a
 7B model fully flipped about half of long reviews (humans: ~0.8–0.9 by the same LLM judge),
-and a 3B model mostly rewrote them.
+and a 3B model mostly rewrote them. For Japanese, use a stronger editor: in the benchmark
+below, qwen2.5-7B gave no gain, while Gemma 4 12B did.
 Rejected candidates are kept in `generation_result_.rejected` with a reason
 (`"edit_too_large"`, `"self_check_failed"`, `"verifier_rejected"`, ...) so you can see what
 each filter catches.
@@ -202,10 +205,23 @@ beat the control, out of 3):
     +0.068, so it reached AUC 0.946 on both against 0.950 and 0.953.
   - With TF-IDF it gained +0.125 and +0.082 (3/3), against +0.168 and +0.132 for
     human-written counterfactuals.
+- **In Japanese it helps, but only with a strong enough editor.** The same design was
+  run on Japanese social-media posts from [WRIME](https://github.com/ids-cv/wrime), with
+  three editor models.
+  - With Gemma 4 12B (QAT, Q4), `CounterfactualOverSampler` beat the duplicated control
+    in 3/3 seeds: AUC +0.040 with TF-IDF and +0.038 with Japanese BERT (0.915 vs 0.877).
+  - With qwen2.5-7B there was no gain: about half its Japanese edits were rejected, and
+    many of the rest weren't clearly positive.
+  - Gemma 4 E4B was in between.
+  - `HardPositiveOverSampler` didn't help with any editor.
+  - WRIME has no human-written counterfactuals, so there is no upper reference here.
 
 **Caveats.**
 
-- 3 seeds, one domain (English movie reviews), one generator model and one training size.
+- 3 seeds and one training size. The English results use one training domain (movie
+  reviews) and one generator model.
+- On WRIME, accuracy gains are much larger than AUC gains. They mostly come from the
+  classifier predicting positive more often, not from better ranking, so compare AUC.
 - The BERT settings are untuned library defaults (3 epochs, `max_length=128`).
 - The counterfactual test set is built the same way as the human reference. The
   out-of-domain results above don't have that bias.
@@ -240,8 +256,8 @@ one without installing it raises a clear `ImportError` with the install command 
 
 ## Backends
 
-`pntx` runs models via a `Backend` protocol, shared by `LLMPromptingClassifier`,
-`HardPositiveOverSampler`, and `TypicalPositiveOverSampler`. `FineTuningClassifier` does **not** use this
+`pntx` runs models via a `Backend` protocol, shared by `LLMPromptingClassifier` and the
+`pn2t` over-samplers. `FineTuningClassifier` does **not** use this
 abstraction at all -- it has no LLM calls, only a fine-tuned `transformers` encoder, so
 there's no loaded model to share with the others:
 
