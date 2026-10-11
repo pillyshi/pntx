@@ -129,3 +129,17 @@ Hub, so run that step on the GPU server. Low-resource TF-IDF models often predic
 class, so read AUC (threshold-free) alongside accuracy. Results go to
 `benchmarks/results/` (git-ignored).
 
+
+**Japanese: WRIME.** `generate --dataset wrime` uses WRIME Ver.2 (`benchmarks/wrime.py`;
+Japanese SNS posts from [ids-cv/wrime](https://github.com/ids-cv/wrime)) instead of CAD.
+- Binary labels come from the sign of the readers' average sentiment polarity, and
+  neutral posts are dropped. Pass `--wrime-label writer` to use the writer's own label.
+- `eda` and `human_cad` are not available: EDA's WordNet operations are English-only,
+  and there are no human counterfactuals for WRIME.
+- `evaluate` reads the dataset from the augmentation file and tests on the official
+  WRIME test split. TF-IDF uses character 2-3-grams there; for BERT, pass a Japanese
+  model such as `--model-name tohoku-nlp/bert-base-japanese-v3`, which needs `fugashi`
+  and `unidic-lite` from the `benchmark` group.
+- **WRIME is licensed CC BY-NC-ND 4.0.** Use it only for non-commercial research, and
+  never publish generated augmentations: they are adaptations of WRIME text. Keep them
+  in the git-ignored `benchmarks/results/`.

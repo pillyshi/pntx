@@ -233,6 +233,74 @@ Values are the mean AUC over 3 seeds; Δdup is the paired difference from
 - For TF-IDF, `duplicate` is slightly *below* `original` on both OOD sets, so
   duplication itself costs a little out of domain for the linear model.
 
+### Japanese: WRIME results (2026-10-11)
+
+**Setup.**
+
+- **Data.** WRIME Ver.2 (`benchmarks/wrime.py`; CC BY-NC-ND 4.0, so generations stay
+  local). Binary labels come from the sign of the readers' average polarity, and
+  neutral posts are dropped. Posts are short, about 30-40 characters (median).
+- **Training.** The same low-resource design: 25 positive / 125 negative training
+  posts, plus 100 positives per condition, over 3 seeds.
+- **Test.** The official WRIME test split, non-neutral posts only: 1,781 posts, 60%
+  positive.
+- **Conditions.** There are no human counterfactuals for WRIME, and EDA is
+  English-only, so the conditions are original, duplicate, hard_positive and
+  counterfactual.
+- **Editors.** qwen2.5-7B-Instruct (Q4_K_M), Gemma 4 E4B-it (Q4_K_M) and Gemma 4
+  12B-it (QAT, UD-Q4_K_XL), all with `n_ctx=4096` on the RTX 4060 Ti.
+  llama-cpp-python 0.3.34 loads Gemma 4 as is.
+- **Classifiers.**
+  - TF-IDF uses character 2-3-grams.
+  - BERT is `tohoku-nlp/bert-base-japanese-v3`.
+
+**Generation cost and rejections (per seed).**
+
+| editor | CF seconds | CF rejected (main reasons) | HardPositive seconds |
+|---|---|---|---|
+| qwen2.5-7B | 405-504 | 50-60 (self_check_failed 22-33, no_op 6-19, edit_too_large 12-16, malformed 3-10) | 416-475 |
+| Gemma 4 E4B | 359-419 | 7-12 (mostly edit_too_large) | 724-794 |
+| Gemma 4 12B | 1178-1333 | 6-9 (mostly edit_too_large) | 3213-3494 |
+
+**Results.** Values are the mean AUC over 3 seeds; Δdup is the paired difference
+from `duplicate`, with wins out of 3. The `original` and `duplicate` rows are
+identical across editors, as they should be, because the training data depend on
+the seed only.
+
+| condition | TF-IDF AUC (Δdup) | BERT AUC (Δdup) | BERT acc | BERT pred_pos |
+|---|---|---|---|---|
+| original | 0.698 | 0.835 | 0.591 | 0.22 |
+| duplicate | 0.698 | 0.877 | 0.677 | 0.31 |
+| hard_positive, qwen | 0.693 (−0.005, 1/3) | 0.847 (−0.030, 0/3) | 0.696 | 0.38 |
+| hard_positive, E4B | 0.649 (−0.048, 0/3) | 0.842 (−0.035, 0/3) | 0.661 | 0.33 |
+| hard_positive, 12B | 0.673 (−0.025, 0/3) | 0.871 (−0.006, 2/3) | 0.678 | 0.32 |
+| counterfactual, qwen | 0.668 (−0.030, 0/3) | 0.888 (+0.011, 1/3) | 0.798 | 0.58 |
+| counterfactual, E4B | 0.716 (+0.018, 2/3) | 0.889 (+0.012, 2/3) | 0.814 | 0.55 |
+| **counterfactual, 12B** | **0.737 (+0.040, 3/3)** | **0.915 (+0.038, 3/3)** | 0.757 | 0.39 |
+
+**Reading.**
+
+- **Counterfactual transfers to Japanese only with a strong enough editor.**
+  - With Gemma 4 12B it beats `duplicate` in 3/3 seeds with both classifiers, by
+    about +0.04 AUC.
+  - With qwen2.5-7B, AUC is no better than `duplicate`. Its Japanese edits were
+    often not clearly positive or not fluent, for example "先週金曜から家に帰ってる"
+    and "…なくなって嬉しいあ", and half of its candidates were rejected.
+  - E4B is in between, with low rejection but a small, inconsistent gain.
+- **The AUC gains are smaller than for English CAD.** English BERT gained +0.06 to
+  +0.07 out of domain and +0.20 on the counterfactual test. There is no human
+  reference here, so the ceiling is unknown.
+- **The large accuracy gains are mostly a threshold shift, not ranking.**
+  - All conditions under-predict positives on this 60%-positive test set
+    (`duplicate` BERT predicts 31% positive; TF-IDF predicts 1%). Counterfactual
+    positives move that toward 0.4-0.6.
+  - As in English, read AUC first.
+- **HardPositive does not help in Japanese with any editor.** Its generations are
+  generic cheerful sentences, stylistically unlike WRIME posts.
+- **Implication for the clinical use case.** Use a 12B-class editor for Japanese.
+  Gemma 4 12B QAT fits the 8 GB GPU at `n_ctx=4096`, but counterfactual generation
+  takes about 20 min per 100 texts.
+
 ## (superseded) BERT results (2026-10-10; same augmentations, `--classifier finetuning`, home GPU)
 
 **Setup.** Evaluated on the home GPU server (RTX 4060 Ti) with `make

@@ -103,5 +103,7 @@ dev = [
 ]
 benchmark = [
     "datasets",
+    "fugashi>=1.5.2",
     "nltk>=3.10.3",
+    "unidic-lite>=1.0.8",
 ]

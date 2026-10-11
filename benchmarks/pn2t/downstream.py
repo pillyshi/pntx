@@ -66,6 +66,24 @@ def sample_training_pairs(
     return rng.sample(pos, n_pos), rng.sample(neg, n_neg)
 
 
+def sample_training_texts(
+    texts: Sequence[str],
+    labels: Sequence[str],
+    *,
+    n_pos: int,
+    n_neg: int,
+    max_chars: int,
+    rng: random.Random,
+) -> tuple[list[str], list[str]]:
+    """``(positives, negatives)`` sampled from a labelled pool (texts up to
+    ``max_chars``); the dataset-agnostic counterpart of ``sample_training_pairs``."""
+    pos = [t for t, y in zip(texts, labels, strict=True) if y == POSITIVE and len(t) <= max_chars]
+    neg = [t for t, y in zip(texts, labels, strict=True) if y == NEGATIVE and len(t) <= max_chars]
+    if n_pos > len(pos) or n_neg > len(neg):
+        raise ValueError(f"requested {n_pos}/{n_neg} pos/neg, only {len(pos)}/{len(neg)} available")
+    return rng.sample(pos, n_pos), rng.sample(neg, n_neg)
+
+
 def duplicate_positives(positives: Sequence[str], n: int, rng: random.Random) -> list[str]:
     """``n`` positives re-sampled with replacement."""
     return [rng.choice(positives) for _ in range(n)] if positives else []
@@ -121,18 +139,34 @@ def generate(args: argparse.Namespace) -> None:
     from pntx.pn2t import CounterfactualOverSampler, HardPositiveOverSampler
 
     rng = random.Random(args.seed)
-    pos_pairs, neg_pairs = sample_training_pairs(
-        cad.load_pairs("train", args.cache_dir),
-        n_pos=args.n_pos,
-        n_neg=args.n_neg,
-        max_chars=args.max_chars,
-        rng=rng,
-    )
-    X = [p.original for p in pos_pairs] + [p.original for p in neg_pairs]
-    y = [POSITIVE] * len(pos_pairs) + [NEGATIVE] * len(neg_pairs)
+    neg_pairs: list[cad.CADPair] = []
+    if args.dataset == "cad":
+        pos_pairs, neg_pairs = sample_training_pairs(
+            cad.load_pairs("train", args.cache_dir),
+            n_pos=args.n_pos,
+            n_neg=args.n_neg,
+            max_chars=args.max_chars,
+            rng=rng,
+        )
+        positives = [p.original for p in pos_pairs]
+        negatives = [p.original for p in neg_pairs]
+    else:
+        from benchmarks import wrime
+
+        positives, negatives = sample_training_texts(
+            *wrime.load("train", args.wrime_label),
+            n_pos=args.n_pos,
+            n_neg=args.n_neg,
+            max_chars=args.max_chars,
+            rng=rng,
+        )
+    X = positives + negatives
+    y = [POSITIVE] * len(positives) + [NEGATIVE] * len(negatives)
     n_add = args.n_neg - args.n_pos
-    positives = [p.original for p in pos_pairs]
-    print(f"train: {args.n_pos} pos / {args.n_neg} neg; adding {n_add} positives per condition")
+    print(
+        f"{args.dataset} train: {args.n_pos} pos / {args.n_neg} neg; "
+        f"adding {n_add} positives per condition"
+    )
 
     augmentations: dict[str, dict[str, Any]] = {}
 
@@ -143,22 +177,24 @@ def generate(args: argparse.Namespace) -> None:
     start = time.perf_counter()
     record("duplicate", duplicate_positives(positives, n_add, rng), time.perf_counter() - start)
 
-    synonyms, stop_words = eda.wordnet_synonyms()
-    start = time.perf_counter()
-    record(
-        "eda",
-        eda.augment_pool(
-            positives,
-            n_add,
+    if args.dataset == "cad":  # EDA's WordNet operations are English-only
+        synonyms, stop_words = eda.wordnet_synonyms()
+        start = time.perf_counter()
+        record(
+            "eda",
+            eda.augment_pool(
+                positives,
+                n_add,
+                alpha=args.eda_alpha,
+                rng=rng,
+                synonyms=synonyms,
+                stop_words=stop_words,
+            ),
+            time.perf_counter() - start,
             alpha=args.eda_alpha,
-            rng=rng,
-            synonyms=synonyms,
-            stop_words=stop_words,
-        ),
-        time.perf_counter() - start,
-        alpha=args.eda_alpha,
-    )
-    record("human_cad", human_cad_positives(neg_pairs, n_add), 0.0)
+        )
+        # Human counterfactual revisions exist only for CAD.
+        record("human_cad", human_cad_positives(neg_pairs, n_add), 0.0)
 
     backend = LlamaCppBackend(
         model_path=args.editor_model,
@@ -174,8 +210,9 @@ def generate(args: argparse.Namespace) -> None:
         "max_tokens": args.max_tokens,
         "random_state": args.seed,
     }
+    language = "Japanese" if args.dataset == "wrime" else None
     for name, sampler in (
-        ("hard_positive", HardPositiveOverSampler(**common)),
+        ("hard_positive", HardPositiveOverSampler(**common, language=language)),
         ("counterfactual", CounterfactualOverSampler(**common)),
     ):
         if name not in args.samplers:
@@ -204,14 +241,21 @@ def generate(args: argparse.Namespace) -> None:
 # ---- evaluate ---------------------------------------------------------------------
 
 
-def _make_classifier(args: argparse.Namespace) -> Any:
+def _make_classifier(args: argparse.Namespace, dataset: str = "cad") -> Any:
     if args.classifier == "tfidf":
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.linear_model import LogisticRegression
         from sklearn.pipeline import make_pipeline
 
+        # Japanese has no spaces, so word tokenisation would treat whole posts
+        # as single tokens; use character 2-3-grams there instead.
+        vectorizer = (
+            TfidfVectorizer(analyzer="char", ngram_range=(2, 3))
+            if dataset == "wrime"
+            else TfidfVectorizer()
+        )
         return make_pipeline(
-            TfidfVectorizer(),
+            vectorizer,
             LogisticRegression(class_weight="balanced", max_iter=2000),
         )
     from pntx.t2pn import FineTuningClassifier
@@ -231,14 +275,26 @@ def evaluate(args: argparse.Namespace) -> None:
     if any(len(v) != n_added for v in raw.values() if v):
         print(f"note: conditions truncated to {n_added} added positives (shortfall)")
 
-    test_orig_X, test_orig_y = cad.load_original("test", args.cache_dir)
-    test_pairs = cad.load_pairs("test", args.cache_dir)
-    test_rev_X = [p.revised for p in test_pairs]
-    test_rev_y = [p.revised_label for p in test_pairs]
-    test_sets = {
-        "original_test": (test_orig_X, test_orig_y),
-        "revised_test": (test_rev_X, test_rev_y),
-    }
+    dataset = data["config"].get("dataset", "cad")
+    test_sets: dict[str, tuple[list[str], list[str]]]
+    if dataset == "cad":
+        test_orig_X, test_orig_y = cad.load_original("test", args.cache_dir)
+        test_pairs = cad.load_pairs("test", args.cache_dir)
+        test_sets = {
+            "original_test": (test_orig_X, test_orig_y),
+            "revised_test": (
+                [p.revised for p in test_pairs],
+                [p.revised_label for p in test_pairs],
+            ),
+        }
+    else:
+        from benchmarks import wrime
+
+        label_source = data["config"].get("wrime_label", "readers")
+        test_sets = {"wrime_test": wrime.load("test", label_source)}
+        if args.ood:
+            print("note: --ood sets are English; ignored for the wrime dataset")
+            args.ood = []
     if args.ood:
         from benchmarks import ood
 
@@ -259,7 +315,7 @@ def evaluate(args: argparse.Namespace) -> None:
         if condition != "original" and condition not in augs:
             continue
         extra = augs.get(condition, [])
-        clf = _make_classifier(args)
+        clf = _make_classifier(args, dataset)
         clf.fit(X + extra, y + [POSITIVE] * len(extra))
         row: dict[str, Any] = {"condition": condition, "n_train": len(X) + len(extra)}
         pos_col = list(clf.classes_).index(POSITIVE)
@@ -332,6 +388,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     g = sub.add_parser("generate", help="Build the training set and all augmentations")
     g.add_argument("--editor-model", required=True, help="GGUF model for the pn2t samplers")
+    g.add_argument(
+        "--dataset",
+        choices=["cad", "wrime"],
+        default="cad",
+        help="cad: English IMDb with human counterfactuals; wrime: Japanese SNS posts "
+        "(CC BY-NC-ND 4.0, keep generations local)",
+    )
+    g.add_argument(
+        "--wrime-label",
+        choices=["readers", "writer"],
+        default="readers",
+        help="WRIME polarity source for the binary label",
+    )
     g.add_argument("--n-pos", type=int, default=25)
     g.add_argument("--n-neg", type=int, default=125)
     g.add_argument("--max-chars", type=int, default=1000)
