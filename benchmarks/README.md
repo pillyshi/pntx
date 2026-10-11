@@ -100,6 +100,7 @@ number of extra positives under each condition:
 | `duplicate` | positives re-sampled with replacement (same-size control) |
 | `eda` | EDA sentences (`benchmarks/eda.py`, alpha = 0.05; needs WordNet via `nltk`) |
 | `hard_positive` | `pn2t.HardPositiveOverSampler` output |
+| `typical_positive` | `pn2t.TypicalPositiveOverSampler` output |
 | `counterfactual` | `pn2t.CounterfactualOverSampler` output (default `verify`) |
 | `human_cad` | crowd workers' positive revisions of the training negatives (upper reference) |
 

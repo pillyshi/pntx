@@ -16,18 +16,18 @@ from pntx.selection import default_tokenizer
 from .conftest import SAMPLE_NEGATIVE, SAMPLE_POSITIVE, FakeBackend
 
 
-def _canned(synthetic_texts: list[dict[str, object]]) -> str:
+def _canned(typical_positives: list[dict[str, object]]) -> str:
     return json.dumps(
         {
             "style_features": ["polite tone"],
             "content_features": ["customer service"],
-            "synthetic_texts": synthetic_texts,
+            "typical_positives": typical_positives,
         }
     )
 
 
-def _st(text: str, generalized_from: list[str] | None = None) -> dict[str, object]:
-    return {"text": text, "generalized_from": generalized_from or ["removed a name"]}
+def _st(text: str) -> dict[str, object]:
+    return {"text": text}
 
 
 def _pools() -> tuple[list[str], list[int]]:
@@ -91,9 +91,15 @@ def test_fit_resample_requires_matching_lengths() -> None:
         sampler.fit_resample(["a", "b"], [1])
 
 
-def test_sampling_strategy_is_required() -> None:
-    with pytest.raises(TypeError, match="sampling_strategy"):
-        TypicalPositiveOverSampler(backend=FakeBackend())  # type: ignore[call-arg]
+def test_sampling_strategy_auto_balances_classes_by_default() -> None:
+    X = SAMPLE_POSITIVE[:1] + SAMPLE_NEGATIVE[:3]
+    y = [1] + [0, 0, 0]
+    backend = FakeBackend(complete_responses=[_canned([_st("new 1"), _st("new 2")])])
+    sampler = TypicalPositiveOverSampler(backend=backend, batch_size=2)
+    assert sampler.sampling_strategy == "auto"
+    X_aug, y_aug = sampler.fit_resample(X, y)
+    assert X_aug[len(X) :] == ["new 1", "new 2"]
+    assert y_aug.count(1) == y_aug.count(0)
 
 
 def test_sampling_strategy_requesting_no_new_samples_returns_original_data() -> None:
@@ -102,10 +108,10 @@ def test_sampling_strategy_requesting_no_new_samples_returns_original_data() -> 
     X_aug, y_aug = sampler.fit_resample(X, y)
     assert X_aug == X
     assert y_aug == y
-    assert sampler.generation_result_.synthetic_texts == []
+    assert sampler.generation_result_.typical_positives == []
 
 
-def test_fit_resample_happy_path_appends_generated_synthetic_texts() -> None:
+def test_fit_resample_happy_path_appends_generated_typical_positives() -> None:
     X, y = _pools()
     backend = FakeBackend(
         complete_responses=[_canned([_st("new synthetic 1"), _st("new synthetic 2")])]
@@ -118,7 +124,7 @@ def test_fit_resample_happy_path_appends_generated_synthetic_texts() -> None:
     assert X_aug[: len(X)] == X
     assert X_aug[len(X) :] == ["new synthetic 1", "new synthetic 2"]
     assert y_aug == y + [1, 1]
-    assert len(sampler.generation_result_.synthetic_texts) == 2
+    assert len(sampler.generation_result_.typical_positives) == 2
     assert sampler.generation_result_.style_features == ["polite tone"]
 
 
@@ -168,14 +174,14 @@ def test_deduplicate_false_accepts_everything() -> None:
     assert X_aug[len(X) :] == [duplicate_of_existing, "also new"]
 
 
-def test_verbatim_leak_dedup_rejects_and_retries() -> None:
+def test_verbatim_copy_dedup_rejects_and_retries() -> None:
     pos_long = "田中太郎さんがサポートセンターに感謝のメッセージを送ってくれてとても嬉しかった"
     X = [pos_long, "ok"]
     y = [1, 0]
-    leaking_text = pos_long[:25] + "、本当に助かりました"
+    copying_text = pos_long[:25] + "、本当に助かりました"
     backend = FakeBackend(
         complete_responses=[
-            _canned([_st(leaking_text)]),
+            _canned([_st(copying_text)]),
             _canned([_st("全く新しい独立した合成テキストです")]),
         ]
     )
@@ -184,21 +190,21 @@ def test_verbatim_leak_dedup_rejects_and_retries() -> None:
     )
     X_aug, _ = sampler.fit_resample(X, y)
     generated = X_aug[len(X) :]
-    assert leaking_text not in generated
+    assert copying_text not in generated
     assert generated == ["全く新しい独立した合成テキストです"]
 
 
-def test_deduplicate_false_also_disables_verbatim_leak_check() -> None:
+def test_deduplicate_false_also_disables_verbatim_copy_check() -> None:
     pos_long = "田中太郎さんがサポートセンターに感謝のメッセージを送ってくれてとても嬉しかった"
     X = [pos_long, "ok"]
     y = [1, 0]
-    leaking_text = pos_long[:25] + "、本当に助かりました"
-    backend = FakeBackend(complete_responses=[_canned([_st(leaking_text)])])
+    copying_text = pos_long[:25] + "、本当に助かりました"
+    backend = FakeBackend(complete_responses=[_canned([_st(copying_text)])])
     sampler = TypicalPositiveOverSampler(
         backend=backend, sampling_strategy=_generate(1, n_pos=1), batch_size=1, deduplicate=False
     )
     X_aug, _ = sampler.fit_resample(X, y)
-    assert X_aug[len(X) :] == [leaking_text]
+    assert X_aug[len(X) :] == [copying_text]
 
 
 def test_min_verbatim_span_is_configurable() -> None:
@@ -283,22 +289,24 @@ def test_no_positive_example_fits_budget_raises() -> None:
 def test_exemplar_sampling_respects_max_examples(monkeypatch: pytest.MonkeyPatch) -> None:
     from pntx.pn2t import prompts as prompts_mod
 
-    real_build_synthetic_user_message = prompts_mod.build_synthetic_user_message
+    real_build_typical_positive_user_message = prompts_mod.build_typical_positive_user_message
     captured: dict[str, list[str]] = {}
 
-    def _capturing_build_synthetic_user_message(
+    def _capturing_build_typical_positive_user_message(
         *,
         pos_texts: list[str],
         n_synthesized: int,
         language: str | None = None,
     ) -> str:
         captured["pos"] = list(pos_texts)
-        return real_build_synthetic_user_message(
+        return real_build_typical_positive_user_message(
             pos_texts=pos_texts, n_synthesized=n_synthesized, language=language
         )
 
     monkeypatch.setattr(
-        prompts_mod, "build_synthetic_user_message", _capturing_build_synthetic_user_message
+        prompts_mod,
+        "build_typical_positive_user_message",
+        _capturing_build_typical_positive_user_message,
     )
 
     pos_texts = ["a", "b", "c", "d", "e"]
@@ -378,7 +386,7 @@ def test_generation_result_contains_style_and_content_features() -> None:
     sampler.fit_resample(X, y)
     assert sampler.generation_result_.style_features == ["polite tone"]
     assert sampler.generation_result_.content_features == ["customer service"]
-    assert sampler.generation_result_.synthetic_texts[0].generalized_from == ["removed a name"]
+    assert sampler.generation_result_.typical_positives[0].text == "new synthetic 1"
 
 
 def test_save_and_load_round_trip(tmp_path: Path) -> None:
@@ -421,19 +429,3 @@ def test_fit_resample_does_not_require_imbalanced_learn_installed() -> None:
         X, y
     )
     assert "imblearn" not in sys.modules
-
-
-def test_load_without_sampling_strategy_generates_nothing_on_refit(tmp_path: Path) -> None:
-    X, y = _pools()
-    backend = FakeBackend(complete_responses=[_canned([_st("new synthetic 1")])])
-    sampler = TypicalPositiveOverSampler(
-        backend=backend, sampling_strategy=_generate(1), batch_size=1
-    )
-    sampler.fit_resample(X, y)
-    path = tmp_path / "synthetic.json"
-    sampler.save(path)
-
-    loaded = TypicalPositiveOverSampler.load(path, backend=FakeBackend())
-    assert loaded.sampling_strategy == {}
-    X_again, _ = loaded.fit_resample(X, y)
-    assert X_again == X

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from ._types import CounterfactualBatch, HardPositiveGenerationResult, SyntheticGenerationResult
+from ._types import (
+    CounterfactualBatch,
+    HardPositiveGenerationResult,
+    TypicalPositiveGenerationResult,
+)
 
 SYSTEM = """\
 You are a data augmentation expert.
@@ -82,8 +86,8 @@ def build_user_message(
     return message
 
 
-SYNTHETIC_SYSTEM = """\
-You are a privacy-preserving synthetic data generation expert.
+TYPICAL_POSITIVE_SYSTEM = """\
+You are a data augmentation expert.
 
 Analyze the provided Positive samples and generate new texts that belong to \
 the Positive class.
@@ -93,48 +97,41 @@ Rules:
 boundary or edge cases
 - No paraphrases of existing positive samples; each text must describe an \
 independent new situation
-- Preserve style, register, topic, and structure
-- Generalize away every specific identifying detail: proper nouns, personal \
-names, brand/organization names, exact dates, numbers, amounts, and \
-locations, and any phrase copied verbatim from a sample. Where a detail is \
-essential to the meaning, replace it with a generic category rather than \
-dropping it silently
+- Preserve the style, register, topic, length, and structure of the samples
+- Extract only the essential Positive-class criteria; exclude proper nouns \
+and coincidental commonalities
 - Maximize diversity; avoid duplicating existing samples
 
-Before generating, analyze style_features and content_features -- describe \
-only general patterns across the samples, never quote or restate a specific \
-identifying detail from any one sample.
-For each generated text, generalized_from must list the *categories* of \
-details you removed or generalized (e.g. "removed a brand name", "replaced \
-an exact date with a relative one") and must NEVER quote or restate the \
-actual original identifying content -- that would leak the very information \
-this field exists to keep out.
-synthetic_texts must contain exactly the requested count.
+Before generating, analyze style_features and content_features: the general \
+patterns shared across the samples.
+typical_positives must contain exactly the requested count.
 Respond with a single JSON object matching this schema and nothing else \
 (no prose, no markdown code fences):
 
 {schema}"""
 
-_SYNTHETIC_USER_TEMPLATE = """\
+_TYPICAL_POSITIVE_USER_TEMPLATE = """\
 Positive:
 {positive_list}
 
 Count: {n_synthesized_texts}"""
 
-_SYNTHETIC_LANGUAGE_INSTRUCTION = """\
+_TYPICAL_POSITIVE_LANGUAGE_INSTRUCTION = """\
 
 Language constraint:
-- Write only synthetic_texts[].text in {language}.
-- Do not force style_features, content_features, or generalized_from to be \
-written in {language}."""
+- Write only typical_positives[].text in {language}.
+- Do not force style_features or content_features to be written in {language}."""
 
 
-def build_synthetic_system_message() -> str:
-    """Render ``SYNTHETIC_SYSTEM`` with ``SyntheticGenerationResult``'s JSON schema inlined."""
-    return SYNTHETIC_SYSTEM.format(schema=json.dumps(SyntheticGenerationResult.model_json_schema()))
+def build_typical_positive_system_message() -> str:
+    """Render ``TYPICAL_POSITIVE_SYSTEM`` with ``TypicalPositiveGenerationResult``'s
+    JSON schema inlined."""
+    return TYPICAL_POSITIVE_SYSTEM.format(
+        schema=json.dumps(TypicalPositiveGenerationResult.model_json_schema())
+    )
 
 
-def build_synthetic_user_message(
+def build_typical_positive_user_message(
     pos_texts: list[str],
     n_synthesized: int,
     language: str | None = None,
@@ -148,12 +145,12 @@ def build_synthetic_user_message(
     positive_list = (
         "\n".join(f"{i + 1}. {t}" for i, t in enumerate(pos_texts)) if pos_texts else "(none)"
     )
-    message = _SYNTHETIC_USER_TEMPLATE.format(
+    message = _TYPICAL_POSITIVE_USER_TEMPLATE.format(
         positive_list=positive_list,
         n_synthesized_texts=n_synthesized,
     )
     if language:
-        message += _SYNTHETIC_LANGUAGE_INSTRUCTION.format(language=language)
+        message += _TYPICAL_POSITIVE_LANGUAGE_INSTRUCTION.format(language=language)
     return message
 
 

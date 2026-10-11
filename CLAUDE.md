@@ -5,7 +5,7 @@
 `pntx` は、ユーザが与える positive / negative の2つのテキストプールを学習素材として、
 
 1. **`t2pn`**(text → positive/negative): 任意のテキストを positive / negative に分類する。目的の異なる複数の **scikit-learn Classifier**(`BaseEstimator` + `ClassifierMixin`、共通の `(X, y)` 契約)を持つ: LLM プロンプティングでその場で分類する `LLMPromptingClassifier`(学習なし、旧 `Classifier`)と、事前学習済みエンコーダを実際に fine-tuning する `FineTuningClassifier`(既定は multilingual BERT だが、`transformers` の `AutoModelForSequenceClassification` 経由なので特定のアーキテクチャに縛られない)。
-2. **`pn2t`**(positive/negative → text): 指定した側(正例)のテキストを新たに生成する。**imbalanced-learn 流の over-sampler ファミリー**として実装する(アルゴリズムごとに1クラス、`<Name>OverSampler` 命名、共通基底 `BaseLLMOverSampler` — 後述)。現在は目的の異なる3クラスを持つ: `HardPositiveOverSampler`(分類器学習データ拡張用の hard positive 生成)、`CounterfactualOverSampler`(既存の負例を最小編集して正例にする反実仮想データ拡張)、`TypicalPositiveOverSampler`(データ公開用途の、具体情報を一般化した典型的な正例の生成)。
+2. **`pn2t`**(positive/negative → text): 指定した側(正例)のテキストを新たに生成する。**imbalanced-learn 流の over-sampler ファミリー**として実装する(アルゴリズムごとに1クラス、`<Name>OverSampler` 命名、共通基底 `BaseLLMOverSampler` — 後述)。現在は目的の異なる3クラスを持つ: `HardPositiveOverSampler`(分類器学習データ拡張用の hard positive 生成)、`CounterfactualOverSampler`(既存の負例を最小編集して正例にする反実仮想データ拡張)、`TypicalPositiveOverSampler`(分類器学習データ拡張用の、hard positive の対極にあたる典型的な正例の生成)。3クラスとも分類器の学習データ拡張が目的で、データ公開用の合成(匿名化・プライバシー保護)はこのファミリーの責務ではない(後述「やらないこと」)。
 
 の2コンポーネントを提供する Python ライブラリ。両者は同じ `pntx/backends/` を共有するが、公開 API 上は独立したクラスであり、両者を束ねるファサードクラスは持たない。
 
@@ -13,7 +13,7 @@
 - **正例/負例の意味論はユーザが定義する。** 感情ポジネガに限らず任意の対比軸(フォーマル/カジュアル、規約準拠/違反 など)を扱う。ライブラリはプールの意味を解釈せず、与えられたテキストをそのまま few-shot 素材・スコアリング素材として使う。
 - **入力は scikit-learn / imbalanced-learn の `(X, y)` 規約に合わせる。** `X: list[str]`(生テキスト)、`y`(2値ラベル)。`y` のどちらの値が "positive" かは `pntx._labels.resolve_binary_labels` で解決する(0/1 や -1/1 のような数値ペアは大きい方が自動的に positive、`"positive"`/`"negative"` 文字列はそのまま、それ以外の任意の2値(例: `"spam"`/`"ham"`)は `pos_label` 引数で明示)— 詳細は後述の「ラベル解決」節。ペアリングを強制しない点は従来通り(`y` でグルーピングした結果、positive/negative それぞれの件数が揃う必要はない)。**ただし `t2pn` の各 Classifier(`LLMPromptingClassifier.fit`/`FineTuningClassifier.fit`)、`pn2t` の各 over-sampler(`HardPositiveOverSampler.fit_resample`/`TypicalPositiveOverSampler.fit_resample`)はどちらも両クラスが最低1件ずつ存在することを要求する**(旧仕様にあった「片側のプールだけで fit」というスモークテスト用途は、sklearn/imblearn の分類データセット規約を採用したことに伴い廃止)。
 - **llama.cpp インプロセス実行が LLM 系コンポーネントの主戦場。** 現在ビルトインで提供する LLM バックエンドは `LlamaCppBackend` のみ(`AnthropicBackend` は一旦廃止 — 経緯は後述)。設計判断で迷ったら llama.cpp での性能・体験を優先する。`t2pn.LLMPromptingClassifier`・`pn2t` とも、LLM 呼び出しは共通の `Backend` 抽象を経由し、同じロード済みモデル(例: 同一の `LlamaCppBackend` インスタンス)を共有できるようにする。**それぞれが独自の LLM クライアントを持って別々にモデルをロードする実装は禁止**(ローカル推論のメモリ/VRAM を二重に食うため)。リモートAPIバックエンドを将来また追加する場合も、`Backend` プロトコルを実装するだけで足りる設計(`_backend_resolve.py` のレジストリに1行足すだけ)は維持すること。**`t2pn.FineTuningClassifier` はこの `Backend` 抽象の対象外。** LLM 補完/スコアリングを一切使わず、`transformers`/`torch` で事前学習済みエンコーダを直接 fine-tuning する別経路であり、`LlamaCppBackend` などとモデルロードを共有する必要も想定もない。
-- **`pn2t` には目的の異なる over-sampler がある。** `HardPositiveOverSampler`(分類器学習データ拡張、hard positive)と `TypicalPositiveOverSampler`(具体情報を一般化した典型的な正例、データ公開用途。差分プライバシーではないので「匿名化」とは呼ばない)。どれも positive 側のみ生成、二値ラベルのみサポート(エンコーディングは `resolve_binary_labels` 経由で `t2pn` と共通)という制約は共通。negative 側生成、3値以上への一般化は引き続きスコープ外(後述)。
+- **`pn2t` には目的の異なる over-sampler がある。** `HardPositiveOverSampler`(境界付近の hard positive)、`CounterfactualOverSampler`(負例の最小編集)、`TypicalPositiveOverSampler`(典型的な positive)。目的はいずれも分類器学習データ拡張。どれも positive 側のみ生成、二値ラベルのみサポート(エンコーディングは `resolve_binary_labels` 経由で `t2pn` と共通)という制約は共通。negative 側生成、3値以上への一般化は引き続きスコープ外(後述)。
 
 ## 公開 API(この形を維持すること)
 
@@ -66,13 +66,13 @@ sampler.generation_result_                  # boundary feature 分析 + 生成�
 # imbalanced-learn の Pipeline にもそのまま乗る(imbalanced-learn 自体は必須依存にしない。
 # fit_resample を duck-typing で提供するだけで imblearn.pipeline.Pipeline は使える)
 
-# --- pn2t: 具体情報を一般化した典型的な正例の生成 (TypicalPositiveOverSampler) ---
+# --- pn2t: 典型的な正例の生成 (TypicalPositiveOverSampler、hard positive の対極) ---
 from pntx.pn2t import TypicalPositiveOverSampler
 
-sampler = TypicalPositiveOverSampler(backend=..., sampling_strategy={1: n_pos + 10})  # デフォルトなし、必須指定
+sampler = TypicalPositiveOverSampler(backend=..., sampling_strategy="auto")  # 既定 "auto"
 
-X_syn, y_syn = sampler.fit_resample(X, y)     # negative は検証にのみ使い、プロンプトには含めない
-sampler.generation_result_.synthetic_texts    # 生成テキスト + 監査用の generalized_from(何を一般化したか)
+X_typ, y_typ = sampler.fit_resample(X, y)     # negative は検証にのみ使い、プロンプトには含めない
+sampler.generation_result_.typical_positives  # 生成テキスト
 
 # --- pn2t: 負例の最小編集による反実仮想データ拡張 (CounterfactualOverSampler) ---
 from pntx.pn2t import CounterfactualOverSampler
@@ -89,6 +89,8 @@ sampler.generation_result_.rejected           # 棄却された候補と理由
 `ClassifyResult`(`.label`/`.confidence`/`__eq__`)による1件ずつの結果表現は廃止し、`predict`/`predict_proba` は sklearn 標準の配列ベース契約に統一する。
 
 0.16.0 で `OverSampler` → `HardPositiveOverSampler`、`SyntheticSampler` → `TypicalPositiveOverSampler`、`n_synthesized`/`seed` → `sampling_strategy`/`random_state` に改名し、旧名は `DeprecationWarning` 付きの互換エイリアスとして 0.17.x まで残した。**0.18.0 で旧名を削除済み**(旧クラス名は `ImportError`、旧パラメータは `TypeError`)。
+
+0.19.0 で `TypicalPositiveOverSampler` をデータ公開用途から分類器学習データ拡張用途に位置づけ直した(具体情報の一般化指示・`generalized_from` 監査ログを削除、`synthetic_texts` → `typical_positives`、`sampling_strategy` の既定を `"auto"` に)。互換エイリアスは置かない(0.18.x で保存した結果は読み込めない)。
 
 ## アーキテクチャ
 
@@ -138,7 +140,7 @@ class ScoringBackend(Backend, Protocol):
 #### `t2pn.FineTuningClassifier`(`pntx/t2pn/finetuning.py`)
 
 - `LLMPromptingClassifier` とは分類アプローチが根本的に異なる: `Backend`/LLM 補完を一切使わず、`transformers` の `AutoModelForSequenceClassification`/`AutoTokenizer` で事前学習済みエンコーダに分類ヘッドを乗せて実際に fine-tuning する。プロンプト・exemplar 選択は不要。
-- `AutoModelForSequenceClassification` はアーキテクチャ非依存(`model_name` を差し替えるだけで BERT/RoBERTa/DeBERTa/多言語モデルなど任意の HF hub チェックポイントに切り替えられる)なので、クラス名は特定の BERT アーキテクチャに縛られない `FineTuningClassifier` とする。ただし `model_name` の既定値は multilingual BERT(`bert-base-multilingual-cased`)にする(`TypicalPositiveOverSampler.sampling_strategy` と違い、自然なデフォルトが存在するため必須パラメータにはしない)。
+- `AutoModelForSequenceClassification` はアーキテクチャ非依存(`model_name` を差し替えるだけで BERT/RoBERTa/DeBERTa/多言語モデルなど任意の HF hub チェックポイントに切り替えられる)なので、クラス名は特定の BERT アーキテクチャに縛られない `FineTuningClassifier` とする。ただし `model_name` の既定値は multilingual BERT(`bert-base-multilingual-cased`)にする(自然なデフォルトが存在するため必須パラメータにはしない)。
 - `fit(X, y)` は本当に学習を行う(この点は `LLMPromptingClassifier`/`pn2t` の over-sampler の「fit はプール保持のみで学習しない」という前提から明示的に外れる、`t2pn` 内で唯一の例外)。トークナイズ → 分類ヘッド(必要なら全体)の fine-tuning を `epochs`/`learning_rate`/`batch_size` 等のハイパーパラメータに従って行い、結果のモデル状態を `model_`/`tokenizer_` などの fitted attributes に保持する。
 - `predict`/`predict_proba` はバッチ forward pass + softmax で実装する(`LLMPromptingClassifier` 同様、逐次 for ループは避ける)。
 - `class_weight`(`None`(既定)/`"balanced"`/`{class_label: weight}` dict、sklearn 慣習)でクラス不均衡に対応する。`LLMPromptingClassifier` はプロンプトごとに大きい側のプールを小さい側に合わせてトリムすることでバランスを取るが、`FineTuningClassifier` は fit 済みプールをそのまま学習に使うため、不均衡なままだと損失が多数派クラスに引っ張られる — その対策は `class_weight` の責務であり、`pn2t` の over-sampler のようなサンプリング側のバランス調整は行わない。`"balanced"` は `n_samples / (2 * class_count)`(`sklearn.utils.class_weight.compute_class_weight("balanced", ...)` と同じ式)。`transformers` の `AutoModelForSequenceClassification` の `labels=` 経由の内蔵 loss はクラス重みを受け付けないため、`model(**encoded).logits` から `torch.nn.CrossEntropyLoss(weight=...)` で自前に loss を計算する。
@@ -167,7 +169,7 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 - アルゴリズムは semaxis 実装をそのまま踏襲:
   1. positive/negative それぞれの exemplar をトークン予算内でサンプリング(`sample_method`: `random`/他、`context_limit` に基づく予算計算)。
   2. positive/negative の特徴・境界特徴(boundary features)を LLM に分析させ、"専門家なら positive と判定するが浅い分類器は negative と誤判定しうる" hard positive テキストを `batch_size` 件ずつバッチ生成。
-  3. 完全一致ベースの dedup(`deduplicate=True` がデフォルト。元データ・既に採択した生成物との文字列一致のみを見る — 旧 `pntx/generate.py` にあった n-gram 近似重複除去とは別物で、v1 では使わない)。`TypicalPositiveOverSampler` はこれとは別目的の漏洩検出レイヤーを追加で持つ(下記)。
+  3. 完全一致ベースの dedup(`deduplicate=True` がデフォルト。元データ・既に採択した生成物との文字列一致のみを見る — 旧 `pntx/generate.py` にあった n-gram 近似重複除去とは別物で、v1 では使わない)。`TypicalPositiveOverSampler` はこれに加えて verbatim コピー検出を持つ(下記)。
   4. `sampling_strategy`(既定 `"auto"` でクラスバランスまで)から求めた生成件数に達するまでバッチ生成を繰り返し、上限バッチ数に達したら警告付きで打ち切る。
 - `generation_result_`(`positive_features`/`negative_features`/`boundary_features`/`hard_positives`、pydantic モデル)を fit 後に公開。`save(path)`/`load(path, backend=...)` で JSON へシリアライズ・復元できる(`backend` は除外し、`load` 時に再注入 — 実装は `BaseLLMOverSampler`)。
 - コンストラクタ引数(`batch_size`, `max_examples_per_class`, `deduplicate`, `context_limit`, `language`, `sample_method`, `verbose`, `logger`)は semaxis 版を踏襲しつつ、`llm: BaseLLMClient | str` は `backend: Backend | str` に置き換える(pntx の `_resolve_backend` を再利用)。生成件数・乱数シード(旧 `n_synthesized`/`seed`、0.18.0 で削除済み)は imblearn 流の `sampling_strategy`/`random_state` に置き換えた。加えて `pos_label`(前述の `resolve_binary_labels` に渡す)を追加。
@@ -182,15 +184,17 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 - `verify` は `"none"`/`"self"`/`predict` を持つ分類器で、**既定は `"self"`**(パイロットベンチマーク `benchmarks/pn2t/counterfactual_pilot.py` で決定。結果はアイデアファイル参照: `"self"` は追加コストなしで `"none"` より精度が高く、難しい正しい編集を失わない。分類器は精度最高だが簡単な編集ばかり残す)。分類器の場合は `verify_cv`(既定 5)で `StratifiedGroupKFold`(同一テキストは同じ fold)によるクロスフィッティング: 各編集は自分の pivot を学習していない `clone(verify)` で判定し、clone は必要な fold の分だけ遅延 fit、渡されたインスタンス自体は fit しない。`verify_cv="prefit"` は渡された分類器をそのまま使う(`CalibratedClassifierCV(cv="prefit")` と同じ流儀)。
 - LLM の出力スキーマ(`CounterfactualBatch`、`pivot_id` はバッチ内番号)と保存する結果(`CounterfactualGenerationResult`、`source_index` は `X` の添字)は別モデル。そのため基底クラスは結果型・バッチ型・アイテム型の3つの型パラメータを持つ。
 
-### `pn2t.TypicalPositiveOverSampler`(`pntx/pn2t/_typical_positive.py`)— 具体情報を一般化した典型的な正例の生成
+### `pn2t.TypicalPositiveOverSampler`(`pntx/pn2t/_typical_positive.py`)— 典型的な正例の生成
 
-- `HardPositiveOverSampler` とは独立したクラス(モード/パラメータではない)。目的関数が逆: `HardPositiveOverSampler` は境界を突く hard positive、`TypicalPositiveOverSampler` は典型的・平均的な positive を、原文の具体的な情報(固有名詞・人名・日付・数値・場所など)を含まないよう生成する。ユースケースはプライバシー上公開できない元テキストプールの代わりに、分布を代表する合成データセットを公開すること。ただし正例を生成プロンプトにそのまま入れるので差分プライバシーではなく、クラス名・ドキュメントで「匿名化」を約束しない(形式的保証が必要なら Aug-PE や DP fine-tuning を案内する)。
+- `HardPositiveOverSampler` とは独立したクラス(モード/パラメータではない)。目的は同じ分類器学習データ拡張だが、目的関数が逆: `HardPositiveOverSampler` は境界を突く hard positive、`TypicalPositiveOverSampler` は正例プールの文体・内容を再現した典型的・平均的な positive を生成する(exemplar の言い換えではなく、それぞれ新しい状況を描く)。
+- **データ公開用途ではない。** 0.18.x までは「公開できない元プールの代わりに公開する合成データ」を想定し、具体情報(固有名詞・日付・数値・場所など)の一般化をプロンプトで指示していたが、匿名化の処理や知見が実際に入っているわけではなく混乱を招くため 0.19.0 で外した。データ公開用の合成は別パッケージとして将来検討する(「やらないこと」参照)。ドキュメントでは「匿名化しない」ことを明記する。
 - `resolve_backend`・`LLMEstimatorMixin`(`pntx/_sklearn.py`、`clone()` 互換性用途で `t2pn.LLMPromptingClassifier` とも共有 — `save`/`load` とは無関係、上記参照)・`selection.sample_group`/`_SAMPLE_METHODS`・`pn2t._structured.complete_structured` など、`HardPositiveOverSampler` と同じ共有インフラ(`BaseLLMOverSampler`)の上に構築する。
-- `fit_resample(X, y)` は `HardPositiveOverSampler` と同じ契約(二値ラベル、両クラス最低1件)を維持するが、**negative 側はラベル検証にのみ使い、生成プロンプトには含めない**(境界フレーミングを避けるため、かつ「positive に本質的 vs この1例に固有」の判断は複数の positive exemplar の共通性から行えるため)。
-- `sampling_strategy` に `HardPositiveOverSampler` のような既定値(`"auto"`)はない(自然な目標がないため)。**デフォルトなしの必須パラメータ**にする(未指定はコンストラクタで `TypeError`)。ただし `load()` は保存済み結果を読むだけで目標件数を決めさせないよう `sampling_strategy={}`(どのクラスも対象にしない = 再 fit しても0件生成)を既定にする。
+- `fit_resample(X, y)` は `HardPositiveOverSampler` と同じ契約(二値ラベル、両クラス最低1件)を維持するが、**negative 側はラベル検証にのみ使い、生成プロンプトには含めない**(境界フレーミングを避けるため。典型性は複数の positive exemplar の共通性から判断できる)。
+- `sampling_strategy` の既定は `HardPositiveOverSampler` と同じ `"auto"`(クラスバランスまで)。
 - exemplar サンプリングは positive 側のみ(`HardPositiveOverSampler` の pos/neg 予算折半・バランス調整ロジックは不要)。token budget は `context_limit - 実測した固定部 - max_tokens - margin`(`HardPositiveOverSampler` と異なり `// 2` しない)。
-- 具体情報の除去はプロンプト指示だけでなく、`pntx.dedup.contains_verbatim_span(text, sources, min_len)` によるベストエフォートの漏洩検出でも担保する: 生成テキストが positive プールから `min_verbatim_span`(デフォルト20文字)以上の連続部分文字列をそのままコピーしていたら reject してリトライする。これは `HardPositiveOverSampler` の完全一致 dedup とも旧 n-gram 近似重複除去とも別物(近似重複検出ではなく漏洩検出が目的、パラフレーズされた漏洩までは検出できないヒューリスティック)。
-- `generation_result_`(`style_features`/`content_features`/`synthetic_texts`、pydantic モデル)を fit 後に公開。各 `synthetic_texts[].generalized_from` は「何を一般化したかの種類」の監査ログであり、元の具体的内容そのものを含めないようプロンプトで明示的に禁止する(この監査フィールド自体が漏洩経路にならないようにするため)。`save`/`load` は `BaseLLMOverSampler` の共通実装(`backend` を除外、`load(path, backend=...)` で再注入)。
+- `deduplicate=True` のとき、完全一致 dedup に加えて `pntx.dedup.contains_verbatim_span(text, sources, min_len)` で、positive プールから `min_verbatim_span`(デフォルト20文字)以上の連続部分文字列をそのままコピーした生成文を reject してリトライする(棄却理由 `"verbatim_copy"`)。目的は exemplar のほぼコピーで学習データの多様性が増えないのを防ぐことであり、漏洩対策・プライバシー保証ではない。
+- `generation_result_`(`style_features`/`content_features`/`typical_positives`、各要素は `text` のみの pydantic モデル)を fit 後に公開。`save`/`load` は `BaseLLMOverSampler` の共通実装(`backend` を除外、`load(path, backend=...)` で再注入)。
+- 下流分類ベンチマーク(`benchmarks/pn2t/downstream.py`)の条件 `typical_positive` として評価する。
 
 ## パッケージング
 
@@ -219,7 +223,7 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 - `t2pn.LLMPromptingClassifier`: `fit`/`predict`/`predict_proba` のユニットテストに加えて、`sklearn.pipeline.Pipeline`・`cross_val_score` に組み込んで壊れないことを確認するテストを持つ。`save`/`load` の往復(`backend` を含めずシリアライズされること、`load` 時に別の `FakeBackend` を注入して復元できること)も対象。
 - `t2pn.FineTuningClassifier`: 事前学習済みチェックポイントのダウンロードなしでユニットテストを完結させるため、`transformers` の `AutoConfig`(小さい `hidden_size`/`num_hidden_layers` 等)からランダム初期化した極小モデルで `fit`/`predict`/`predict_proba`・`Pipeline`/`cross_val_score` 互換・`save`/`load` を検証する(開発環境によっては huggingface.co 等の外部ホストに到達できない場合があるため、実在の事前学習済みチェックポイントのダウンロードを伴う確認は `tests/integration/` 側に分離する)。`class_weight`(`None`/`"balanced"`/dict)の重み計算が正しいこと、不正な値で `ValueError` になることも対象。
 - `pn2t.HardPositiveOverSampler`: 「boundary feature 分析 → hard positive 生成 → dedup で棄却 → リトライ → 上限到達で警告」の分岐を必ずカバー。`sampling_strategy="auto"` のクラスバランス自動計算、`save`/`load` の往復も対象。
-- `pn2t.TypicalPositiveOverSampler`: `HardPositiveOverSampler` と同様の分岐に加え、negative 側がプロンプトに含まれないことの直接検証、`contains_verbatim_span` による漏洩 dedup(reject → リトライ、`min_verbatim_span` 可変、`deduplicate=False` で無効化されること)を必ずカバー。
+- `pn2t.TypicalPositiveOverSampler`: `HardPositiveOverSampler` と同様の分岐に加え、negative 側がプロンプトに含まれないことの直接検証、`contains_verbatim_span` による verbatim コピー dedup(reject → リトライ、`min_verbatim_span` 可変、`deduplicate=False` で無効化されること)、プロンプトがプライバシー/匿名化の枠組みを持たないことを必ずカバー。
 - `pn2t.CounterfactualOverSampler`: 最小編集の受理(日本語・英語)、`max_edit_ratio` 超過・no-op・形式不正・完全一致重複・不正な `pivot_id` の棄却とリトライ、正例が pivot にならないこと、`verify` の3方式、クロスフィッティング(各編集を判定する clone の学習データに pivot も生成物も含まれない、渡したインスタンスは fit されない、`"prefit"` は clone/fit しない、K が小さい方のクラス件数を超えると `ValueError`)。LLM 出力は pivot に依存するので、テストはプロンプトから pivot を読み取って編集を返す fake backend を使う。
 - `pn2t` 共通(`BaseLLMOverSampler`): `sampling_strategy` の各形式(文字列・float・dict・callable)が imblearn の over-sampling と同じ件数を返すこと、不正値・negative 側の生成要求で `ValueError` になること、`random_state` の int/`RandomState`、0.18.0 で削除した旧クラス名・旧パラメータが確実に使えないこと(`ImportError`/`TypeError`)。
 - dedup(完全一致・`contains_verbatim_span`)は日本語・英語両方のケースを入れる。
@@ -236,6 +240,6 @@ imbalanced-learn の `over_sampling` モジュールと同じ整理にする:
 
 - 3クラス以上の分類(将来検討。ただし内部設計で `["positive", "negative"]` をハードコードした定数散在にはしない)
 - `pn2t` の negative 側生成(hard negative 相当)は引き続きスコープ外
-- 「成果物としての生成」(品質重視・任意サイド生成)は `pn2t.TypicalPositiveOverSampler` として実装済み。ただし意味的なパラフレーズ漏洩の自動検出(embedding ベースの類似度検証等)は引き続きスコープ外 — `contains_verbatim_span` による verbatim コピー検出のみのベストエフォート
+- データ公開用の合成(非公開プールの代わりに公開する合成データ、匿名化・プライバシー保護)。`pn2t` の over-sampler はいずれも分類器学習データ拡張用であり、この用途には使わない。pntx には入れず、別パッケージとして作る方針(`fit_resample` で元データに追記する契約が公開用途と合わない、DP の会計まで持つとライブラリの性格が変わるため)。DP(Aug-PE 等、`research/notes/xie-2024.md`)や漏洩評価を前提に設計する
 - 埋め込みモデル自体の学習(`DiversitySelector`/`NearestSelector`/dedup で使う埋め込みは既存の学習済みモデルを利用するのみ)。`t2pn.FineTuningClassifier` による分類器の fine-tuning はスコープ内(上記アーキテクチャ参照)
 - CLI(ライブラリ API のみ。CLI は将来別途)

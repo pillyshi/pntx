@@ -27,19 +27,18 @@ class HardPositiveGenerationResult(BaseModel):
     hard_positives: list[HardPositive]
 
 
-class SyntheticText(BaseModel):
-    """One generated synthetic-positive text plus an auditable anonymization note."""
+class TypicalPositive(BaseModel):
+    """One generated typical positive-class text."""
 
     text: str
-    generalized_from: list[str]
 
 
-class SyntheticGenerationResult(BaseModel):
+class TypicalPositiveGenerationResult(BaseModel):
     """Full structured output of one ``TypicalPositiveOverSampler`` generation batch."""
 
     style_features: list[str]
     content_features: list[str]
-    synthetic_texts: list[SyntheticText]
+    typical_positives: list[TypicalPositive]
 
 
 class CounterfactualEditOutput(BaseModel):

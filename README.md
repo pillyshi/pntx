@@ -15,9 +15,8 @@ into two independent components:
    goals: **`HardPositiveOverSampler`** generates "hard positive" text to balance an
    imbalanced dataset for classifier training, **`CounterfactualOverSampler`** minimally
    edits existing negatives into positives (counterfactually-augmented data), and
-   **`TypicalPositiveOverSampler`** generates typical, representative positives with
-   specific details generalized away, for publishing a stand-in for data you can't
-   share as-is.
+   **`TypicalPositiveOverSampler`** generates typical, representative positives (the
+   counterpart of hard positives), also for classifier training.
 
 The meaning of "positive" and "negative" is entirely up to you. It doesn't have to be
 sentiment — it can be formal/casual, policy-compliant/violating, or any other contrast
@@ -68,16 +67,16 @@ sampler = HardPositiveOverSampler(
 X_aug, y_aug = sampler.fit_resample(X, [1, 1, 0, 0])  # binary labels only; positive class = 1
 sampler.generation_result_.hard_positives  # generated texts + the LLM's rationale for each
 
-# --- pn2t: typical-positive generation for publishable stand-in data ---
+# --- pn2t: typical (rather than hard) positives ---
 from pntx.pn2t import TypicalPositiveOverSampler
 
-synth = TypicalPositiveOverSampler(
+typical = TypicalPositiveOverSampler(
     backend="llama",
     backend_kwargs={"model_path": "model.gguf"},
-    sampling_strategy={1: 2 + 10},  # required: 2 existing positives + 10 new ones
+    sampling_strategy={1: 2 + 10},  # 2 existing positives + 10 new ones; default "auto"
 )
-X_syn, y_syn = synth.fit_resample(X, [1, 1, 0, 0])
-synth.generation_result_.synthetic_texts  # generated texts + what was generalized away for each
+X_typ, y_typ = typical.fit_resample(X, [1, 1, 0, 0])
+typical.generation_result_.typical_positives  # generated texts
 
 # --- pn2t: counterfactual minimal edits of negatives ---
 from pntx.pn2t import CounterfactualOverSampler
@@ -114,23 +113,19 @@ after resampling; a callable `f(y)` returning such a dict also works. A strategy
 would require generating negatives raises `ValueError`. `random_state` (an int or a
 `numpy.random.RandomState`) seeds exemplar sampling.
 
-`TypicalPositiveOverSampler.fit_resample` has a different goal: instead of hard
-positives for classifier augmentation, it generates *typical* positive-class texts with
-specific identifying details (names, exact dates/numbers, locations, verbatim phrases)
-generalized away, as a stand-in you can publish when the original pool can't be shared.
-It has no default `sampling_strategy`, since there's no natural target size for such a
-set. The negative pool is still required (for the same binary-label validation as
-`HardPositiveOverSampler`), but it's
-never shown to the backend — only positive exemplars inform generation, since contrasting
-against negatives would frame generation around the boundary rather than the typical
-case. Removing identifying details is best-effort: besides the prompt instructions, a lightweight verbatim-
-substring check (`min_verbatim_span`, default 20 characters) rejects and retries any
-generated text that copies a long span straight out of a positive exemplar — this catches
-copy-through leaks but not paraphrased ones, so it's not a privacy guarantee. In
-particular, it is **not differentially private**: positive exemplars go into the prompt
-verbatim. If you need a formal guarantee, use a DP method that keeps private text out of
-the prompt, such as [Aug-PE](https://arxiv.org/abs/2403.01749) (Xie et al., ICML 2024) or
-DP fine-tuning of the generator ([Yue et al., ACL 2023](https://aclanthology.org/2023.acl-long.74/)).
+`TypicalPositiveOverSampler.fit_resample` is the counterpart of hard positives: it
+generates *typical*, ordinary positive-class texts that reproduce the style and content
+of the positive pool, each describing a new situation instead of paraphrasing an
+exemplar. Its `sampling_strategy` defaults to `"auto"`, as for `HardPositiveOverSampler`.
+The negative pool is still required (for the same binary-label validation), but it's
+never shown to the backend: contrasting against negatives would frame generation around
+the boundary rather than the typical case. Besides exact-match dedup, a verbatim-substring
+check (`min_verbatim_span`, default 20 characters) rejects and retries any generated text
+that copies a long span straight out of a positive exemplar.
+
+It does **not** anonymize: exemplars go into the prompt verbatim and generated texts can
+carry their details, so it isn't meant for producing a publishable stand-in for private
+data. Whether typical positives help a classifier hasn't been benchmarked yet (see below).
 
 `CounterfactualOverSampler.fit_resample` builds *pairs*: each generated positive is the
 smallest edit of one existing negative (its "pivot") that makes the positive label apply,
@@ -225,10 +220,18 @@ beat the control, out of 3):
 - The BERT settings are untuned library defaults (3 epochs, `max_length=128`).
 - The counterfactual test set is built the same way as the human reference. The
   out-of-domain results above don't have that bias.
+- `TypicalPositiveOverSampler` is a condition in the benchmark but hasn't been run yet.
 
 The full tables, per-seed ranges and caveats are in
 `research/ideas/downstream-augmentation-benchmark.md`, and how to rerun the benchmark is in
 `benchmarks/README.md`.
+
+> **Upgrading from before 0.19.0.** `TypicalPositiveOverSampler` is now positioned as a
+> classifier-augmentation sampler, not a privacy-oriented one. Its prompt no longer asks
+> the LLM to generalize away identifying details, `sampling_strategy` defaults to
+> `"auto"`, and its result is now `generation_result_.typical_positives` (items have only
+> `text`; `synthetic_texts` and `generalized_from` are gone). Results saved by earlier
+> versions can't be loaded.
 
 > **Upgrading from before 0.16.0.** `OverSampler` is now `HardPositiveOverSampler`,
 > `SyntheticSampler` is now `TypicalPositiveOverSampler`, and their `n_synthesized`/`seed`
@@ -312,7 +315,7 @@ from pntx.backends.llama import LlamaCppBackend
 backend = LlamaCppBackend(model_path="model.gguf")
 clf = LLMPromptingClassifier(backend=backend)
 sampler = HardPositiveOverSampler(backend=backend)
-synth = TypicalPositiveOverSampler(backend=backend, sampling_strategy={1: 100})
+typical = TypicalPositiveOverSampler(backend=backend)
 cf = CounterfactualOverSampler(backend=backend, verify=LLMPromptingClassifier(backend=backend))
 ```
 

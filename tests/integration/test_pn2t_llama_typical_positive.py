@@ -6,7 +6,7 @@ from pntx.pn2t import TypicalPositiveOverSampler
 from ..conftest import SAMPLE_NEGATIVE, SAMPLE_POSITIVE
 
 
-def test_fit_resample_generates_requested_number_of_synthetic_texts(
+def test_fit_resample_generates_requested_number_of_typical_positives(
     llama_backend: LlamaCppBackend,
 ) -> None:
     X = SAMPLE_POSITIVE + SAMPLE_NEGATIVE

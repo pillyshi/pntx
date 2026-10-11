@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import os
 import random
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
@@ -15,29 +14,26 @@ from ._base import (
     SamplingStrategy,
     _Logger,
 )
-from ._types import SyntheticGenerationResult, SyntheticText
-
-if TYPE_CHECKING:
-    from typing_extensions import Self
+from ._types import TypicalPositive, TypicalPositiveGenerationResult
 
 __all__ = ["TypicalPositiveOverSampler"]
 
 
 class TypicalPositiveOverSampler(
-    BaseLLMOverSampler[SyntheticGenerationResult, SyntheticGenerationResult, SyntheticText]
+    BaseLLMOverSampler[
+        TypicalPositiveGenerationResult, TypicalPositiveGenerationResult, TypicalPositive
+    ]
 ):
     """LLM-based over-sampler that generates typical, representative
-    positives with specific details generalized away (positive/negative →
-    text, "pn2t"). (Named ``SyntheticSampler`` before 0.16.0.)
+    positives for classifier data augmentation (positive/negative → text,
+    "pn2t"). (Named ``SyntheticSampler`` before 0.16.0.)
 
-    Unlike ``HardPositiveOverSampler`` (which generates *hard positives* --
-    boundary-adjacent texts meant to challenge a classifier -- for data
-    augmentation), ``TypicalPositiveOverSampler`` generates *typical,
-    ordinary* positive-class texts that carry no specific identifying detail
-    from the original exemplars (proper nouns, names, exact dates/numbers,
-    locations, verbatim phrases are generalized away). The intended use is
-    publishable data: when the original positive pool can't be shared as-is,
-    a synthetic pool that reproduces its style/content distribution can be.
+    The counterpart of ``HardPositiveOverSampler``: where that class
+    generates *hard positives* -- boundary-adjacent texts meant to challenge
+    a classifier -- ``TypicalPositiveOverSampler`` generates *typical,
+    ordinary* positive-class texts that reproduce the style and content of
+    the positive pool, each describing a new situation rather than
+    paraphrasing an exemplar.
 
     Implements the imbalanced-learn ``fit_resample(X, y)`` interface, same as
     ``HardPositiveOverSampler``, and returns the original data with the
@@ -45,34 +41,27 @@ class TypicalPositiveOverSampler(
     and require both a positive and a negative pool -- but here the negative
     pool is used only for that validation; it is never included in the
     generation prompt, since showing negatives would frame generation around
-    the positive/negative boundary, which is exactly what this class must
-    avoid. Only binary ``y`` is supported, and only the positive side is
-    generated. Which of the two values in ``y`` means "positive" is
-    resolved by ``pntx._labels.resolve_binary_labels`` (see the
-    ``pos_label`` parameter below) -- the same rule
-    ``HardPositiveOverSampler``/``t2pn.LLMPromptingClassifier``/
-    ``t2pn.FineTuningClassifier`` use.
+    the positive/negative boundary rather than the typical positive. Only
+    binary ``y`` is supported, and only the positive side is generated.
+    Which of the two values in ``y`` means "positive" is resolved by
+    ``pntx._labels.resolve_binary_labels`` (see the ``pos_label`` parameter
+    below) -- the same rule ``HardPositiveOverSampler``/
+    ``t2pn.LLMPromptingClassifier``/``t2pn.FineTuningClassifier`` use.
 
     ``sampling_strategy`` follows imbalanced-learn's semantics, restricted to
-    generating the positive class (see ``HardPositiveOverSampler``), but has
-    **no default**: there is no natural target size for a publishable
-    synthetic set, so it must be given explicitly -- typically as a dict
-    ``{pos_label: n_positive_after_resampling}``.
+    generating the positive class (see ``HardPositiveOverSampler``); the
+    default ``"auto"`` generates until the positive class is as large as the
+    negative class.
 
-    Removing identifying details is a best-effort property of the prompt
-    plus a lightweight verbatim-substring filter (``min_verbatim_span``);
-    this is a heuristic, not a guarantee -- it catches exact copied spans
-    but not paraphrased leaks (e.g. "John Smith" → "the customer named John"
-    would not be caught).
+    With ``deduplicate=True`` (default), a generated text is rejected and
+    regenerated when it exactly matches an existing or already accepted text
+    (as in ``HardPositiveOverSampler``) or when it copies a substring of at
+    least ``min_verbatim_span`` characters from a positive exemplar -- a
+    cheap guard against near-copies that add little to the training data.
 
-    In particular, this is **not** differentially private: positive
-    exemplars are placed in the generation prompt verbatim, so nothing
-    formally bounds how much any single exemplar can influence (or leak
-    into) the output. Methods with a formal (ε, δ)-DP guarantee keep private
-    text out of the prompt entirely -- e.g. Aug-PE (Xie et al. 2024), which
-    only lets private samples cast noisy nearest-neighbor votes over
-    LLM-generated candidates, or DP fine-tuning of the generator (Yue et al.
-    2023). Use one of those when a formal guarantee is required.
+    This class does not anonymize: generated texts may carry details from
+    the exemplars, which are placed in the prompt verbatim. It is not meant
+    for producing a publishable stand-in for private data.
 
     ``context_limit`` and ``max_tokens`` work as in
     ``HardPositiveOverSampler`` (capped by the backend's ``context_window``,
@@ -93,30 +82,26 @@ class TypicalPositiveOverSampler(
     batches, whereas classification should be as deterministic as possible.
 
     Fitted attributes:
-        generation_result_: Full LLM response including style/content
-            feature analysis and, for each generated text, a note on what
-            categories of detail were generalized away (for auditing).
+        generation_result_: Full LLM response: the style/content feature
+            analysis and the generated ``typical_positives``.
 
     Example::
 
         from pntx.pn2t import TypicalPositiveOverSampler
 
-        n_pos = sum(1 for label in labels if label == 1)
         sampler = TypicalPositiveOverSampler(
             backend="llama",
             backend_kwargs={"model_path": "model.gguf"},
-            sampling_strategy={1: n_pos + 10},  # generate 10 positives
         )
         X_aug, y_aug = sampler.fit_resample(texts, labels)
 
-        for st in sampler.generation_result_.synthetic_texts:
-            print(st.text)
-            print("  generalized:", st.generalized_from)
+        for item in sampler.generation_result_.typical_positives:
+            print(item.text)
     """
 
     _n_prompt_sides = 1
-    _result_model = SyntheticGenerationResult
-    _batch_model = SyntheticGenerationResult
+    _result_model = TypicalPositiveGenerationResult
+    _batch_model = TypicalPositiveGenerationResult
     _progress_desc = "Generating typical positives"
     _items_name = "typical positives"
 
@@ -124,7 +109,7 @@ class TypicalPositiveOverSampler(
         self,
         backend: Backend | str,
         *,
-        sampling_strategy: SamplingStrategy,
+        sampling_strategy: SamplingStrategy = "auto",
         backend_kwargs: dict[str, Any] | None = None,
         batch_size: int = 3,
         max_examples: int | None = None,
@@ -141,10 +126,7 @@ class TypicalPositiveOverSampler(
         logger: _Logger | None = None,
         pos_label: Any = None,
     ) -> None:
-        """``sampling_strategy`` is required (there is no natural default
-        target size), e.g. ``{pos_label: n_positive_after_resampling}``.
-
-        ``pos_label`` says which of the two values in ``fit_resample``'s
+        """``pos_label`` says which of the two values in ``fit_resample``'s
         ``y`` means "positive"; ``None`` (default) auto-resolves it
         (numeric: greater value; ``"positive"``/``"negative"``: used
         directly) and raises ``ValueError`` if ``y``'s two values don't fit
@@ -168,18 +150,6 @@ class TypicalPositiveOverSampler(
         self.logger = logger
         self.pos_label = pos_label
 
-    @classmethod
-    def load(cls, path: str | os.PathLike[str], backend: Backend | str, **kwargs: Any) -> Self:
-        """Load fitted state written by :meth:`save` (see the base class).
-
-        ``sampling_strategy`` defaults to ``{}`` here -- a target for no
-        class, i.e. generate nothing if ``fit_resample`` is called again --
-        so loading saved results doesn't force choosing a target size. Pass
-        one explicitly to resume generating.
-        """
-        kwargs.setdefault("sampling_strategy", {})
-        return super().load(path, backend, **kwargs)
-
     def _validate_extra_params(self) -> None:
         if self.max_examples is not None and self.max_examples < 1:
             raise ValueError(f"max_examples must be >= 1 or None, got {self.max_examples}")
@@ -191,8 +161,8 @@ class TypicalPositiveOverSampler(
 
     def _render_messages(self, sides: list[list[str]], batch_count: int) -> tuple[str, str]:
         (pos_texts,) = sides
-        system = prompts.build_synthetic_system_message()
-        user = prompts.build_synthetic_user_message(
+        system = prompts.build_typical_positive_system_message()
+        user = prompts.build_typical_positive_user_message(
             pos_texts=pos_texts,
             n_synthesized=batch_count,
             language=self.language,
@@ -214,11 +184,11 @@ class TypicalPositiveOverSampler(
                 "lower max_tokens, or remove the outlier text."
             )
 
-    def _new_result(self) -> SyntheticGenerationResult:
-        return SyntheticGenerationResult(
+    def _new_result(self) -> TypicalPositiveGenerationResult:
+        return TypicalPositiveGenerationResult(
             style_features=[],
             content_features=[],
-            synthetic_texts=[],
+            typical_positives=[],
         )
 
     def _build_prompt(
@@ -237,17 +207,17 @@ class TypicalPositiveOverSampler(
         messages, _ = self._fit_prompt([pos_sampled], [1], batch_count, tokenizer_fn)
         return messages
 
-    def _merge_batch_analysis(self, result: SyntheticGenerationResult) -> None:
+    def _merge_batch_analysis(self, result: TypicalPositiveGenerationResult) -> None:
         self.generation_result_.style_features.extend(result.style_features)
         self.generation_result_.content_features.extend(result.content_features)
 
-    def _batch_items(self, result: SyntheticGenerationResult) -> list[SyntheticText]:
-        return result.synthetic_texts
+    def _batch_items(self, result: TypicalPositiveGenerationResult) -> list[TypicalPositive]:
+        return result.typical_positives
 
-    def _accepted_items(self) -> list[SyntheticText]:
-        return self.generation_result_.synthetic_texts
+    def _accepted_items(self) -> list[TypicalPositive]:
+        return self.generation_result_.typical_positives
 
-    def _dedup_extra_reason(self, item: SyntheticText, pos_texts: list[str]) -> str | None:
+    def _dedup_extra_reason(self, item: TypicalPositive, pos_texts: list[str]) -> str | None:
         if dedup.contains_verbatim_span(item.text, pos_texts, min_len=self.min_verbatim_span):
-            return "verbatim_leak"
+            return "verbatim_copy"
         return None

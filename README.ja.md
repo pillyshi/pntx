@@ -10,7 +10,7 @@
 2. **`pntx.pn2t`**(positive/negative → テキスト)— 目的の異なる [imbalanced-learn](https://imbalanced-learn.org/) 流の over-sampler 群です。
    - **`HardPositiveOverSampler`**: 分類器の学習データを補うため、判別の難しい正例(hard positive)を生成します。
    - **`CounterfactualOverSampler`**: 既存の負例を最小限に編集して正例にします(反実仮想データ拡張)。
-   - **`TypicalPositiveOverSampler`**: 具体的な情報を一般化した典型的な正例を生成します。そのままでは共有できないデータの代わりに公開する用途を想定しています。
+   - **`TypicalPositiveOverSampler`**: 典型的な正例を生成します(hard positive の対極)。これも分類器の学習データを補うためのものです。
 
 「positive」と「negative」の意味はユーザが決めます。感情のポジネガに限らず、フォーマル/カジュアル、規約準拠/違反など、例で定義できる任意の対比を扱えます。`pntx` はプールの意味を解釈せず、few-shot やスコアリングの素材として使うだけです。
 
@@ -58,16 +58,16 @@ sampler = HardPositiveOverSampler(
 X_aug, y_aug = sampler.fit_resample(X, [1, 1, 0, 0])  # 二値ラベルのみ。positive クラスは 1
 sampler.generation_result_.hard_positives  # 生成したテキストと、それぞれの LLM による根拠
 
-# --- pn2t: 公開用の代替データとしての典型的な正例の生成 ---
+# --- pn2t: (hard ではなく)典型的な正例の生成 ---
 from pntx.pn2t import TypicalPositiveOverSampler
 
-synth = TypicalPositiveOverSampler(
+typical = TypicalPositiveOverSampler(
     backend="llama",
     backend_kwargs={"model_path": "model.gguf"},
-    sampling_strategy={1: 2 + 10},  # 必須: 既存の正例 2件 + 新規 10件
+    sampling_strategy={1: 2 + 10},  # 既存の正例 2件 + 新規 10件。既定は "auto"
 )
-X_syn, y_syn = synth.fit_resample(X, [1, 1, 0, 0])
-synth.generation_result_.synthetic_texts  # 生成したテキストと、それぞれ何を一般化したか
+X_typ, y_typ = typical.fit_resample(X, [1, 1, 0, 0])
+typical.generation_result_.typical_positives  # 生成したテキスト
 
 # --- pn2t: 負例の最小編集による反実仮想データ拡張 ---
 from pntx.pn2t import CounterfactualOverSampler
@@ -98,12 +98,13 @@ cf.generation_result_.rejected  # 棄却された候補とその理由
 
 負例の生成が必要になる指定は `ValueError` になります。`random_state`(int か `numpy.random.RandomState`)は exemplar のサンプリングのシードです。
 
-`TypicalPositiveOverSampler.fit_resample` は目的が異なります。分類器のデータ拡張のための hard positive ではなく、positive クラスの*典型的な*テキストを生成します。その際、個人や対象を特定できる具体的な情報(名前、正確な日付や数値、場所、原文そのままの言い回し)は一般化します。元のプールを共有できないときに、代わりに公開するデータを作るための機能です。
+`TypicalPositiveOverSampler.fit_resample` は hard positive の対極にあたる、positive クラスの*典型的な*テキストを生成します。正例プールの文体や内容を再現しつつ、exemplar の言い換えではなく、それぞれ新しい状況を描いたテキストにします。
 
-- 自然な目標件数がないので、`sampling_strategy` に既定値はありません。
-- 負例のプールも必要ですが(`HardPositiveOverSampler` と同じ二値ラベルの検証のため)、backend には一切見せません。生成には正例の exemplar だけを使います。負例と対比させると、典型例ではなくクラス境界を軸にした生成になってしまうためです。
-- 具体情報の除去はベストエフォートです。プロンプトでの指示に加えて、正例の exemplar から長い部分文字列をそのままコピーした生成文を棄却して再生成する、簡易的なチェック(`min_verbatim_span`、既定 20文字)があります。これはそのままのコピーによる漏洩は検出しますが、言い換えによる漏洩は検出できないので、プライバシーの保証にはなりません。
-- 特に、**差分プライバシーではありません**。正例の exemplar はそのままプロンプトに入ります。形式的な保証が必要なら、非公開のテキストをプロンプトに入れない DP の手法を使ってください。たとえば [Aug-PE](https://arxiv.org/abs/2403.01749)(Xie et al., ICML 2024)や、生成モデルの DP fine-tuning([Yue et al., ACL 2023](https://aclanthology.org/2023.acl-long.74/))があります。
+- `sampling_strategy` の既定は `HardPositiveOverSampler` と同じく `"auto"` です。
+- 負例のプールも必要ですが(同じ二値ラベルの検証のため)、backend には一切見せません。生成には正例の exemplar だけを使います。負例と対比させると、典型例ではなくクラス境界を軸にした生成になってしまうためです。
+- 完全一致の重複除去に加えて、正例の exemplar から長い部分文字列をそのままコピーした生成文を棄却して再生成するチェック(`min_verbatim_span`、既定 20文字)があります。
+- **匿名化はしません。** exemplar はそのままプロンプトに入り、生成文にその具体的な情報が残ることがあります。非公開データの代わりに公開するデータを作る用途には向きません。
+- 典型的な正例が分類器の役に立つかは、まだベンチマークしていません(下記参照)。
 
 `CounterfactualOverSampler.fit_resample` は*ペア*を作ります。生成する正例はそれぞれ、既存の負例(「pivot」)を、positive のラベルが当てはまるように最小限だけ編集したものです。
 
@@ -160,8 +161,11 @@ cf.generation_result_.rejected  # 棄却された候補とその理由
 - WRIME では、正解率の改善が AUC の改善よりずっと大きくなっています。これは主に分類器が正例をより多く予測するようになったためで、順位付けが良くなったためではないので、AUC で比べてください。
 - BERT の設定は、チューニングしていないライブラリの既定値(3エポック、`max_length=128`)です。
 - 書き換え版テストは人手の参考データと同じ作り方をしています。上のドメイン外の結果にはこの偏りはありません。
+- `TypicalPositiveOverSampler` はベンチマークの条件に加えましたが、まだ実行していません。
 
 全体の表、seed ごとの範囲、注意点は `research/ideas/downstream-augmentation-benchmark.md` に、ベンチマークの再実行方法は `benchmarks/README.md` にあります。
+
+> **0.19.0 より前からのアップグレード.** `TypicalPositiveOverSampler` は、プライバシー目的ではなく分類器のデータ拡張用の sampler という位置づけになりました。プロンプトで具体的な情報の一般化を指示しなくなり、`sampling_strategy` の既定が `"auto"` になり、結果は `generation_result_.typical_positives`(各要素は `text` のみ)になりました。`synthetic_texts` と `generalized_from` は廃止です。以前のバージョンで保存した結果は読み込めません。
 
 > **0.16.0 より前からのアップグレード.** `OverSampler` は `HardPositiveOverSampler` に、`SyntheticSampler` は `TypicalPositiveOverSampler` に、それらの `n_synthesized`/`seed` パラメータは `sampling_strategy`/`random_state`(imbalanced-learn の名前)になりました。旧名は 0.16.0 で非推奨となり、**0.18.0 で削除済み**なので、現在は `ImportError`/`TypeError` になります。`n_synthesized=n` は `sampling_strategy={pos_label: 既存の正例数 + n}` に、`n_synthesized=None` は `"auto"` に置き換えてください。int の `random_state` は、同じ int の `seed` と同じ結果になります。
 
@@ -219,7 +223,7 @@ from pntx.backends.llama import LlamaCppBackend
 backend = LlamaCppBackend(model_path="model.gguf")
 clf = LLMPromptingClassifier(backend=backend)
 sampler = HardPositiveOverSampler(backend=backend)
-synth = TypicalPositiveOverSampler(backend=backend, sampling_strategy={1: 100})
+typical = TypicalPositiveOverSampler(backend=backend)
 cf = CounterfactualOverSampler(backend=backend, verify=LLMPromptingClassifier(backend=backend))
 ```
 

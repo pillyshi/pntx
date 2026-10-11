@@ -13,6 +13,7 @@ up balanced and the same size:
   after Huang et al. 2020);
 - ``eda``: EDA sentences from the positives (``benchmarks/eda.py``);
 - ``hard_positive``: ``pn2t.HardPositiveOverSampler``;
+- ``typical_positive``: ``pn2t.TypicalPositiveOverSampler``;
 - ``counterfactual``: ``pn2t.CounterfactualOverSampler`` (default ``verify``);
 - ``human_cad``: the crowd workers' positive revisions of training negatives
   (upper reference; only possible on CAD data).
@@ -48,7 +49,15 @@ from pntx.types import NEGATIVE, POSITIVE
 
 _RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 
-CONDITIONS = ("original", "duplicate", "eda", "hard_positive", "counterfactual", "human_cad")
+CONDITIONS = (
+    "original",
+    "duplicate",
+    "eda",
+    "hard_positive",
+    "typical_positive",
+    "counterfactual",
+    "human_cad",
+)
 
 
 # ---- pure helpers (unit-tested) -------------------------------------------------
@@ -136,7 +145,11 @@ def bootstrap_ci(
 def generate(args: argparse.Namespace) -> None:
     from benchmarks import eda
     from pntx.backends.llama import LlamaCppBackend
-    from pntx.pn2t import CounterfactualOverSampler, HardPositiveOverSampler
+    from pntx.pn2t import (
+        CounterfactualOverSampler,
+        HardPositiveOverSampler,
+        TypicalPositiveOverSampler,
+    )
 
     rng = random.Random(args.seed)
     neg_pairs: list[cad.CADPair] = []
@@ -224,6 +237,7 @@ def generate(args: argparse.Namespace) -> None:
     language = "Japanese" if args.dataset == "wrime" else None
     for name, sampler in (
         ("hard_positive", HardPositiveOverSampler(**common, language=language)),
+        ("typical_positive", TypicalPositiveOverSampler(**common, language=language)),
         ("counterfactual", CounterfactualOverSampler(**common)),
     ):
         if name not in args.samplers:
@@ -426,8 +440,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     g.add_argument(
         "--samplers",
         nargs="*",
-        default=["hard_positive", "counterfactual"],
-        choices=["hard_positive", "counterfactual"],
+        default=["hard_positive", "typical_positive", "counterfactual"],
+        choices=["hard_positive", "typical_positive", "counterfactual"],
     )
     g.add_argument("--batch-size", type=int, default=2)
     g.add_argument("--n-ctx", type=int, default=8192)
