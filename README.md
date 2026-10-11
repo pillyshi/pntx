@@ -125,7 +125,8 @@ that copies a long span straight out of a positive exemplar.
 
 It does **not** anonymize: exemplars go into the prompt verbatim and generated texts can
 carry their details, so it isn't meant for producing a publishable stand-in for private
-data. Whether typical positives help a classifier hasn't been benchmarked yet (see below).
+data. In the downstream benchmark below, typical positives were roughly on par with
+duplicating the existing positives.
 
 `CounterfactualOverSampler.fit_resample` builds *pairs*: each generated positive is the
 smallest edit of one existing negative (its "pivot") that makes the positive label apply,
@@ -180,8 +181,13 @@ beat the control, out of 3):
 |---|---|---|
 | EDA (Wei & Zou 2019) | −0.020 (1/3) | −0.165 (0/3) |
 | `HardPositiveOverSampler` | −0.050 (0/3) | +0.021 (2/3) |
+| `TypicalPositiveOverSampler` | −0.034 (0/3) | +0.036 (2/3)\* |
 | **`CounterfactualOverSampler`** | **+0.171 (3/3)** | **+0.196 (3/3)** |
 | human-written counterfactuals (reference) | +0.281 (3/3) | +0.208 (3/3) |
+
+\* From a later re-evaluation that added `TypicalPositiveOverSampler` (0.19.1). TF-IDF
+reproduced every other number exactly. BERT did not (see the caveats): in that run,
+`HardPositiveOverSampler` was −0.083 (2/3) and `CounterfactualOverSampler` +0.168 (3/3).
 
 **What this shows.**
 
@@ -192,6 +198,10 @@ beat the control, out of 3):
   0.919).
 - **Neither EDA nor `HardPositiveOverSampler` reliably beat simply duplicating the existing
   positives.**
+- **`TypicalPositiveOverSampler` is roughly on par with duplication.** It was mostly a
+  little better than `HardPositiveOverSampler`. Its only consistent gain was out of domain
+  with TF-IDF: AUC +0.066 on Yelp and +0.020 on Amazon (3/3). On WRIME it gave +0.007
+  (TF-IDF, 3/3) and −0.011 (BERT, 1/3).
 - **The gain carries over to other review domains.** The same IMDb-trained models were
   also tested on balanced out-of-domain samples: 1,000 Yelp and 1,000 Amazon reviews. That
   addresses the caveat that the counterfactual test set is built like the human reference.
@@ -220,7 +230,11 @@ beat the control, out of 3):
 - The BERT settings are untuned library defaults (3 epochs, `max_length=128`).
 - The counterfactual test set is built the same way as the human reference. The
   out-of-domain results above don't have that bias.
-- `TypicalPositiveOverSampler` is a condition in the benchmark but hasn't been run yet.
+- BERT evaluation isn't reproducible run to run. Re-evaluating the same augmentations
+  reproduced seed 0 exactly but moved some seed-1 and seed-2 AUCs by up to 0.2.
+  `CounterfactualOverSampler` stayed at about 0.96, so its result holds, but small BERT
+  differences between the other conditions are within this noise. The cause is under
+  investigation.
 
 The full tables, per-seed ranges and caveats are in
 `research/ideas/downstream-augmentation-benchmark.md`, and how to rerun the benchmark is in
