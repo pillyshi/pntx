@@ -143,3 +143,10 @@ Japanese SNS posts from [ids-cv/wrime](https://github.com/ids-cv/wrime)) instead
 - **WRIME is licensed CC BY-NC-ND 4.0.** Use it only for non-commercial research, and
   never publish generated augmentations: they are adaptations of WRIME text. Keep them
   in the git-ignored `benchmarks/results/`.
+
+**Speed tip (8 GB GPUs).** With Gemma 4 12B (QAT Q4) on an 8 GB card, offloading every
+layer (`--n-gpu-layers -1`) makes prompt evaluation about 10× slower: around 190 tok/s.
+Pass `--n-gpu-layers 47` to keep one layer on the CPU, which brought prompt evaluation
+back to about 1,900 tok/s. Add `--prompt-lookup 10`, which turns on prompt-lookup
+speculative decoding. Together they cut counterfactual generation from about 22 to
+8 minutes per 100 texts. The numbers are in `research/ideas/downstream-augmentation-benchmark.md`.

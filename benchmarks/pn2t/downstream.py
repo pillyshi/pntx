@@ -196,11 +196,22 @@ def generate(args: argparse.Namespace) -> None:
         # Human counterfactual revisions exist only for CAD.
         record("human_cad", human_cad_positives(neg_pairs, n_add), 0.0)
 
+    backend_kwargs: dict[str, Any] = {}
+    if args.prompt_lookup:
+        # Speculative decoding that drafts tokens by copying n-grams from the
+        # prompt: counterfactual edits copy most of their pivot, so most drafts
+        # should be accepted.
+        from llama_cpp.llama_speculative import LlamaPromptLookupDecoding
+
+        backend_kwargs["draft_model"] = LlamaPromptLookupDecoding(
+            num_pred_tokens=args.prompt_lookup
+        )
     backend = LlamaCppBackend(
         model_path=args.editor_model,
         n_ctx=args.n_ctx,
         n_gpu_layers=args.n_gpu_layers,
         verbose=False,
+        **backend_kwargs,
     )
     common = {
         "backend": backend,
@@ -388,6 +399,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     g = sub.add_parser("generate", help="Build the training set and all augmentations")
     g.add_argument("--editor-model", required=True, help="GGUF model for the pn2t samplers")
+    g.add_argument(
+        "--prompt-lookup",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Prompt-lookup speculative decoding drafting N tokens (0: off)",
+    )
     g.add_argument(
         "--dataset",
         choices=["cad", "wrime"],

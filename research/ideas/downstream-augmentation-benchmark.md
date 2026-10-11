@@ -301,6 +301,59 @@ the seed only.
   Gemma 4 12B QAT fits the 8 GB GPU at `n_ctx=4096`, but counterfactual generation
   takes about 20 min per 100 texts.
 
+### Gemma 4 12B generation speed on an 8 GB GPU (2026-10-11)
+
+**Problem.** On the RTX 4060 Ti (8 GB), counterfactual generation with Gemma 4 12B
+(QAT UD-Q4_K_XL, `n_ctx=4096`) took about 20 min per 100 texts.
+
+**Profile.**
+
+- Prompt evaluation was the bottleneck.
+  - Gemma 4 12B ran at about 190 tok/s with every layer offloaded (`n_gpu_layers=-1`),
+    using 7.5-7.9 GB of VRAM. Gemma 4 E4B ran at about 3,500 tok/s and qwen2.5-7B at
+    about 2,900 tok/s.
+  - Each sampler call has a prompt of about 1,400 tokens, so prompt evaluation alone
+    took 7-8 s per call. Decoding was a normal 23-32 tok/s without grammar.
+- Not the cause:
+  - `logits_all=True`, which `LlamaCppBackend` forces for scoring, changed little.
+  - Smaller `n_ubatch` (128/256) and a q8 KV cache didn't help.
+- Grammar-constrained JSON decoding costs about 1.6× in decode speed. That is
+  secondary.
+
+**Fix: leave one layer on the CPU.**
+
+| `n_gpu_layers` | VRAM | prompt eval | decode |
+|---|---|---|---|
+| 36 | 6.7 GB | 1,188 tok/s | 20.2 tok/s |
+| 43 | 7.5 GB | 1,556 tok/s | 25.7 tok/s |
+| **47** | 7.8 GB | **1,902 tok/s** | 30.4 tok/s |
+| 48 (all blocks) | 7.9 GB | 784 tok/s | 32.1 tok/s |
+| -1 (all, incl. output) | 7.5-7.9 GB | ~190 tok/s | 23-28 tok/s |
+
+Full offload hits a cliff near the 8 GB limit. Our guess is that the large output
+layer (262k vocabulary) pushes llama.cpp's compute buffers over the limit; we did not
+confirm this.
+
+**Benchmark** (WRIME seed 0, counterfactual only, 100 texts, single runs):
+
+| setting | generation | rejected | BERT AUC (dup 0.905) | acc |
+|---|---|---|---|---|
+| baseline: `-1`, batch 2 | 1,333 s | 6 | 0.908 | 0.706 |
+| `47`, batch 2 | 585 s (2.3×) | 6 | 0.937 | 0.800 |
+| `47`, batch 4 | 545 s (2.4×) | 7 | 0.911 | 0.772 |
+| `47`, batch 2, prompt lookup 10 | **498 s (2.7×)** | 6 | 0.915 | 0.845 |
+
+**Reading.**
+
+- Leaving a layer off the GPU is the main win, at 2.3×.
+- Prompt-lookup speculative decoding (`llama_cpp.llama_speculative.LlamaPromptLookupDecoding`;
+  `generate --prompt-lookup N`) adds about 15%. Edits copy most of their pivot, so
+  drafts copied from the prompt are often accepted.
+- `batch_size=4` adds little.
+- Quality is unchanged within run-to-run noise (single seed; AUC 0.908-0.937).
+- Gemma 4's own MTP draft heads are only supported in llama-cpp-python's example
+  server (as of 0.3.36), not in the `Llama` API, so they weren't tried.
+
 ## (superseded) BERT results (2026-10-10; same augmentations, `--classifier finetuning`, home GPU)
 
 **Setup.** Evaluated on the home GPU server (RTX 4060 Ti) with `make
